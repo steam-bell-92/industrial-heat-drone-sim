@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Industrial Heat-Zone Drone Simulation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="hud">
+      <div class="title">Industrial Heat-Zone Search</div>
+      <div class="sub">Drone Thermal Patrol | Real-Time 3D Simulation</div>
+      <div id="controls"></div>
+      <div id="metrics"></div>
+    </div>
+    <div id="telemetry">
+      <div class="title">DRL Telemetry</div>
+      <div class="sub">State, Action Values, Learning Params</div>
+      <div id="drl-metrics"></div>
+    </div>
+    <canvas id="scene"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

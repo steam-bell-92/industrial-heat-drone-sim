@@ -1,0 +1,7 @@
+.vercel
+web/node_modules/
+web/dist/
+trainer/__pycache__/
+trainer/.venv/
+*.pyc
+__pycache__/
