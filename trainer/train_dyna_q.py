@@ -20,6 +20,13 @@ def _env_int(name: str, default: int) -> int:
     return int(value) if value is not None and value.strip() else default
 
 
+def _env_path(name: str) -> Path | None:
+    value = os.getenv(name)
+    if not value or not value.strip():
+        return None
+    return Path(value).expanduser().resolve()
+
+
 @dataclass
 class Config:
     grid_x: int = 40
@@ -263,6 +270,7 @@ def train(cfg: Config, experience_path: Path) -> None:
     agent = DynaQAgent(cfg)
 
     policy_path = Path(__file__).resolve().parent / 'models' / 'dyna_q_policy.json'
+    output_policy_path = _env_path('DYNA_POLICY_OUTPUT_PATH') or policy_path
     if maybe_load_policy(agent, policy_path):
         print(f'Resumed from existing policy: {policy_path}')
 
@@ -339,8 +347,8 @@ def train(cfg: Config, experience_path: Path) -> None:
                 f'avg_reward={avg_r:7.3f} | avg_heat_hits={avg_h:6.2f} | epsilon={epsilon:5.3f}'
             )
 
-    save_policy(agent, policy_path)
-    print(f'Saved policy: {policy_path}')
+    save_policy(agent, output_policy_path)
+    print(f'Saved policy: {output_policy_path}')
 
 
 def main() -> None:

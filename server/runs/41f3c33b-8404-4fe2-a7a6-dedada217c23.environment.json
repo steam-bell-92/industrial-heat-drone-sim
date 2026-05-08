@@ -1,0 +1,50 @@
+{
+  "rendering": {
+    "lighting_profile": "industrial-default",
+    "floor_material": "concrete",
+    "fog_density": 0.004,
+    "wall_height": 24,
+    "wall_material": "steel"
+  },
+  "project_id": "project01",
+  "source": "live-builder",
+  "grid": {
+    "cell_size": 3,
+    "width": 40,
+    "height": 40
+  },
+  "objects": [
+    {
+      "height": 18,
+      "z": -8,
+      "type": "building",
+      "x": -22
+    },
+    {
+      "height": 24,
+      "z": 10,
+      "type": "building",
+      "x": -8
+    },
+    {
+      "height": 15,
+      "z": -6,
+      "type": "building",
+      "x": 12
+    },
+    {
+      "height": 10,
+      "z": 14,
+      "type": "machine",
+      "x": 20
+    }
+  ],
+  "preset": "building_cluster",
+  "optimization": {
+    "target_fps": 60,
+    "use_instancing": true,
+    "merge_static_geometry": true,
+    "enable_lod": true,
+    "max_draw_calls": 220
+  }
+}

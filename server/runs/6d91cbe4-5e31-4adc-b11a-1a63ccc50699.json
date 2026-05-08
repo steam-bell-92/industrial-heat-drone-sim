@@ -1,0 +1,12 @@
+{
+  "id": "6d91cbe4-5e31-4adc-b11a-1a63ccc50699",
+  "status": "error",
+  "createdAt": 1778176484863,
+  "mapImage": "sample_map.png",
+  "projectId": "newwwwwwwwwwwwwww",
+  "pid": 21180,
+  "logPath": "C:\\Users\\Aanshu Bhawsar\\Desktop\\projects\\DRL(Wildfire )\\server\\runs\\6d91cbe4-5e31-4adc-b11a-1a63ccc50699.log",
+  "environmentName": "current",
+  "exitCode": 1,
+  "finishedAt": 1778176583433
+}

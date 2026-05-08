@@ -1,0 +1,11 @@
+{
+  "title": "Industrial Heat Drone Sim Artifacts",
+  "id": "anshubhawsar/industrial-heat-drone-sim-artifacts",
+  "subtitle": "Policy, trainer code, and map-processing assets for DRL wildfire industrial twin",
+  "description": "Dataset used by Kaggle GPU kernel to train and export Dyna-Q policy artifacts.",
+  "licenses": [
+    {
+      "name": "CC0-1.0"
+    }
+  ]
+}

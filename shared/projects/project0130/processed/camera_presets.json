@@ -1,0 +1,44 @@
+{
+  "project_id": "project0130",
+  "presets": [
+    {
+      "name": "topdown",
+      "position": {
+        "x": 0,
+        "y": 220,
+        "z": 0
+      },
+      "target": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    {
+      "name": "follow",
+      "position": {
+        "x": 24,
+        "y": 26,
+        "z": 24
+      },
+      "target": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    {
+      "name": "isometric",
+      "position": {
+        "x": 120,
+        "y": 90,
+        "z": 120
+      },
+      "target": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    }
+  ]
+}

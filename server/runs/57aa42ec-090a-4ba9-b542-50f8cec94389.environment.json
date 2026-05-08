@@ -1,0 +1,23 @@
+{
+  "rendering": {
+    "lighting_profile": "industrial-default",
+    "floor_material": "concrete",
+    "fog_density": 0.004,
+    "wall_height": 12,
+    "wall_material": "steel"
+  },
+  "objects": [],
+  "optimization": {
+    "target_fps": 60,
+    "use_instancing": true,
+    "merge_static_geometry": true,
+    "enable_lod": true,
+    "max_draw_calls": 260
+  },
+  "grid": {
+    "cell_size": 3,
+    "width": 40,
+    "height": 40
+  },
+  "project_id": "project01"
+}

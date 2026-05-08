@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "project_manifest.schema.json",
+  "title": "Industrial Drone Project Manifest",
+  "type": "object",
+  "required": [
+    "project_id",
+    "client_name",
+    "map_image_file",
+    "grid_resolution",
+    "world_scale_m_per_cell"
+  ],
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "client_name": {
+      "type": "string",
+      "minLength": 2
+    },
+    "map_image_file": {
+      "type": "string"
+    },
+    "grid_resolution": {
+      "type": "integer",
+      "minimum": 20,
+      "maximum": 256
+    },
+    "world_scale_m_per_cell": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "map_rotation_degrees": {
+      "type": "number",
+      "default": 0
+    },
+    "mission_profile": {
+      "type": "object",
+      "properties": {
+        "max_seconds": { "type": "integer", "minimum": 60, "maximum": 3600 },
+        "drone_max_speed": { "type": "number", "minimum": 1, "maximum": 60 },
+        "heat_zone_budget": { "type": "integer", "minimum": 1, "maximum": 200 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

@@ -60,11 +60,14 @@ body::after {
   top: 16px;
   left: 16px;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 14px 16px;
   border-radius: 14px;
   border: 2px solid var(--stroke);
   background: var(--bg-card);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(6px);
   color: var(--ink);
   max-width: min(420px, calc(100vw - 32px));
   box-shadow: var(--neon-glow), 0 10px 40px rgba(0, 0, 0, 0.6);
@@ -72,6 +75,7 @@ body::after {
   text-shadow: 0 0 8px rgba(61, 224, 255, 0.4);
   overflow: hidden;
   border-left: 3px solid var(--accent-alt);
+  max-height: calc(100vh - 32px);
 }
 
 #hud::before,
@@ -108,6 +112,7 @@ body::after {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 6px;
+  white-space: pre-line;
 }
 
 #metrics::-webkit-scrollbar {
@@ -129,6 +134,25 @@ body::after {
   grid-template-columns: 1fr;
   gap: 8px;
   margin-bottom: 10px;
+  max-height: min(68vh, 620px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+
+#controls::-webkit-scrollbar {
+  width: 8px;
+}
+
+#controls::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+}
+
+#controls::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(68, 240, 208, 0.85), rgba(35, 206, 255, 0.7));
+  border-radius: 6px;
 }
 
 .row {
@@ -207,7 +231,7 @@ button.active {
   border-radius: 14px;
   border: 2px solid var(--stroke);
   background: var(--bg-card);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(6px);
   color: var(--ink);
   max-width: min(450px, calc(100vw - 32px));
   box-shadow: var(--neon-glow), 0 10px 40px rgba(0, 0, 0, 0.6);
@@ -221,6 +245,7 @@ button.active {
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
   line-height: 1.45;
+  white-space: pre-line;
 }
 
 .tsp-popup {
@@ -238,7 +263,7 @@ button.active {
   box-shadow: 0 0 30px rgba(68, 240, 208, 0.26), 0 24px 80px rgba(0, 0, 0, 0.8);
   color: var(--ink);
   padding: 14px;
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(8px);
 }
 
 .tsp-popup.hidden {

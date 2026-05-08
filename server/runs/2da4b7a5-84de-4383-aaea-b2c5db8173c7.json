@@ -1,0 +1,12 @@
+{
+  "id": "2da4b7a5-84de-4383-aaea-b2c5db8173c7",
+  "status": "error",
+  "createdAt": 1778176252949,
+  "mapImage": "sample_map.png",
+  "projectId": "project01",
+  "pid": 14840,
+  "logPath": "C:\\Users\\Aanshu Bhawsar\\Desktop\\projects\\DRL(Wildfire )\\server\\runs\\2da4b7a5-84de-4383-aaea-b2c5db8173c7.log",
+  "environmentName": "current",
+  "exitCode": 1,
+  "finishedAt": 1778176346794
+}

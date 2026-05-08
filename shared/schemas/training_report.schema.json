@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "training_report.schema.json",
+  "title": "Kaggle Training Report",
+  "type": "object",
+  "required": ["status", "training", "artifacts"],
+  "properties": {
+    "status": { "type": "string" },
+    "project_id": { "type": ["string", "null"] },
+    "dataset_root": { "type": "string" },
+    "training": {
+      "type": "object",
+      "properties": {
+        "dyna_train_seconds": { "type": "string" },
+        "dyna_planning_steps": { "type": "string" },
+        "dyna_episodes": { "type": "string" },
+        "elapsed_seconds": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "policy": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

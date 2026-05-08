@@ -1,0 +1,12 @@
+{
+  "id": "41f3c33b-8404-4fe2-a7a6-dedada217c23",
+  "status": "complete",
+  "createdAt": 1778009216752,
+  "mapImage": "sample_map.png",
+  "projectId": "project01",
+  "pid": 8164,
+  "logPath": "C:\\Users\\Aanshu Bhawsar\\Desktop\\projects\\DRL(Wildfire )\\server\\runs\\41f3c33b-8404-4fe2-a7a6-dedada217c23.log",
+  "environmentName": "building_cluster",
+  "exitCode": 0,
+  "finishedAt": 1778009258651
+}

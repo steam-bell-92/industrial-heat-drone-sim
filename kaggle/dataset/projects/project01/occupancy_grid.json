@@ -1,0 +1,8 @@
+{
+  "project_id": "project01",
+  "source": "fallback-generator",
+  "map_image": "sample_map.png",
+  "objects": [],
+  "grid_resolution": 80,
+  "world_scale_m_per_cell": 1.4
+}

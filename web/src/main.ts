@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { jsPDF } from 'jspdf';
 import './styles.css';
+import { getTrainingApiBaseUrl } from './runtimeConfig';
 
 /**
  * Autonomous Drone Fire Detection System
@@ -10,6 +11,83 @@ import './styles.css';
  * - TSP shortest path solver for discovered zone visitation
  * - Real-time thermal imaging and pathfinding
  */
+
+// ============================================
+// AUTHENTICATION SYSTEM
+// ============================================
+function initializeAuthentication(): boolean {
+  const isAuthenticated = localStorage.getItem('drl_authenticated') === 'true';
+  
+  if (!isAuthenticated) {
+    showLoginPage();
+    return false;
+  }
+  
+  setupAuthenticationUI();
+  return true;
+}
+
+function showLoginPage(): void {
+  const loginContainer = document.getElementById('login-container') as HTMLDivElement;
+  
+  loginContainer.innerHTML = `
+    <div style="
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #0a1628 0%, #1a3a52 50%, #0d2438 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    ">
+      <div style="
+        position: relative;
+        width: 100%;
+        height: 100%;
+      ">
+        <iframe src="/src/login.html" style="
+          width: 100%;
+          height: 100%;
+          border: none;
+        "></iframe>
+      </div>
+    </div>
+  `;
+  
+  loginContainer.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  
+  // Check for authentication change periodically
+  const authCheckInterval = setInterval(() => {
+    if (localStorage.getItem('drl_authenticated') === 'true') {
+      clearInterval(authCheckInterval);
+      loginContainer.style.display = 'none';
+      document.body.style.overflow = 'auto';
+      setupAuthenticationUI();
+    }
+  }, 500);
+}
+
+function setupAuthenticationUI(): void {
+  const docBtn = document.getElementById('doc-btn') as HTMLButtonElement;
+  const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement;
+  
+  if (docBtn) {
+    docBtn.addEventListener('click', () => {
+      window.open('/new.html', '_blank', 'noopener,noreferrer');
+    });
+  }
+  
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => {
+      if (confirm('Are you sure you want to logout?')) {
+        localStorage.removeItem('drl_authenticated');
+        localStorage.removeItem('drl_user');
+        window.location.reload();
+      }
+    });
+  }
+}
 
 type HeatZone = {
   id: number;
@@ -45,6 +123,16 @@ type RLAction = {
   dvz: number;
 };
 
+type CustomEnvironmentObject = {
+  type: string;
+  height: number;
+  x: number;
+  z: number;
+  width?: number;
+  depth?: number;
+  mesh?: THREE.Object3D;
+};
+
 type HybridPolicyConfig = {
   grid_x?: number;
   grid_z?: number;
@@ -62,6 +150,12 @@ const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const metrics = document.getElementById('metrics') as HTMLDivElement;
 const controls = document.getElementById('controls') as HTMLDivElement;
 const drlMetrics = document.getElementById('drl-metrics') as HTMLDivElement;
+let droneStatusEl: HTMLElement | null = null;
+let missionCountdownEl: HTMLElement | null = null;
+let zonesDiscoveredEl: HTMLElement | null = null;
+let zonesVisitedEl: HTMLElement | null = null;
+let distanceValEl: HTMLElement | null = null;
+let speedValEl: HTMLElement | null = null;
 
 const WORLD_SIZE = 120;
 const SCAN_RADIUS = 30;
@@ -70,6 +164,7 @@ const MAX_DRONE_SPEED = 40;
 let currentCameraView: 'topdown' | 'side' | 'follow' | 'isometric' | 'freelook' = 'freelook';
 let heatZoneCount = 3;
 let buildingFields: { x: number; z: number; radius: number }[] = [];
+let customBuildingFields: { x: number; z: number; radius: number }[] = [];
 
 // Hidden heat zones (not known to drone - must be discovered)
 let HIDDEN_HEAT_ZONES: HeatZone[] = [];
@@ -101,10 +196,13 @@ let discoveredZonesVisualDirty = true;
 let epsilon = 0.28;
 let policyStatus: 'loading' | 'ready' | 'unavailable' = 'loading';
 let hybridPolicy: HybridPolicyPayload | null = null;
+let selectedPolicyPath = 'trainer/models/hybrid_drl_explorer_policy.json';
 let policyGridX = 36;
 let policyGridZ = 36;
 let policyTBins = 10;
 let policyCoverageBins = 8;
+let thermalBinSize = 12; // degrees per thermal bin (configurable)
+let thermalOffset = 0; // degrees shift applied before binning
 let coverageCells = new Set<string>();
 let recentGridCells: string[] = [];
 let cellVisitCounts = new Map<string, number>();
@@ -153,12 +251,22 @@ const HYBRID_ACTION_DELTAS: { x: number; z: number }[] = [
   { x: 0, z: 0 },
 ];
 
+const API_BASE_URL = getTrainingApiBaseUrl();
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x081018);
 scene.fog = new THREE.FogExp2(0x0a1a24, 0.0055);
 
+// Create custom environment objects group
+const customObjectsGroup = new THREE.Group();
+scene.add(customObjectsGroup);
+
+// Raycaster for click-to-place
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(1);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.15));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = false;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -735,7 +843,10 @@ function getDroneObservation(): DroneObservation {
 function computeBuildingAvoidance(position: THREE.Vector3): THREE.Vector3 {
   const avoidance = new THREE.Vector3(0, 0, 0);
 
-  for (const building of buildingFields) {
+  // Combine both procedural and custom buildings
+  const allBuildings = [...buildingFields, ...customBuildingFields];
+
+  for (const building of allBuildings) {
     const dx = position.x - building.x;
     const dz = position.z - building.z;
     const distance = Math.hypot(dx, dz);
@@ -750,9 +861,9 @@ function computeBuildingAvoidance(position: THREE.Vector3): THREE.Vector3 {
 
   return avoidance;
 }
-
 function isPointBlockedByBuilding(x: number, z: number, buffer = 8): boolean {
-  return buildingFields.some((building) => Math.hypot(x - building.x, z - building.z) < building.radius + buffer);
+  const allBuildings = [...buildingFields, ...customBuildingFields];
+  return allBuildings.some((building) => Math.hypot(x - building.x, z - building.z) < building.radius + buffer);
 }
 
 function clampIndex(v: number, maxExclusive: number): number {
@@ -823,7 +934,7 @@ function getPolicyActionIndex(): number | null {
   }
 
   const { gx, gz } = worldToPolicyGrid(droneState.position.x, droneState.position.z);
-  const thermalBin = clampIndex(Math.floor(currentThermalSignal / 12), policyTBins);
+  const thermalBin = clampIndex(Math.floor((currentThermalSignal + thermalOffset) / Math.max(1, thermalBinSize)), policyTBins);
   const coverageRatio = coverageCells.size / Math.max(1, policyGridX * policyGridZ);
   const coverageBin = clampIndex(Math.floor(coverageRatio * policyCoverageBins), policyCoverageBins);
   const action = hybridPolicy.best_actions[gx]?.[gz]?.[thermalBin]?.[coverageBin];
@@ -1208,15 +1319,17 @@ function finalizeMission(reason: string): void {
   showTspPopup();
 }
 
-async function loadHybridPolicy(): Promise<void> {
+async function loadPolicyFromPath(policyPath: string): Promise<void> {
+  selectedPolicyPath = policyPath;
   policyStatus = 'loading';
   try {
-    const response = await fetch('/models/hybrid_drl_explorer_policy.json', { cache: 'no-cache' });
+    const response = await fetch(`${API_BASE_URL}/api/policies/content?path=${encodeURIComponent(policyPath)}`, { cache: 'no-cache' });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const payload = (await response.json()) as HybridPolicyPayload;
+    const responsePayload = await response.json() as { path: string; payload: HybridPolicyPayload };
+    const payload = responsePayload.payload;
     if (!Array.isArray(payload.best_actions) || payload.best_actions.length === 0) {
       throw new Error('best_actions missing');
     }
@@ -1227,12 +1340,16 @@ async function loadHybridPolicy(): Promise<void> {
     policyTBins = payload.config?.t_bins ?? payload.best_actions[0]?.[0]?.length ?? 10;
     policyCoverageBins = payload.config?.coverage_bins ?? payload.best_actions[0]?.[0]?.[0]?.length ?? 8;
     policyStatus = 'ready';
-    console.log(`Hybrid policy loaded (${payload.algorithm ?? 'unknown'})`);
+    console.log(`Policy loaded from ${policyPath} (${payload.algorithm ?? 'unknown'})`);
   } catch (err) {
     hybridPolicy = null;
     policyStatus = 'unavailable';
-    console.warn('Hybrid policy unavailable, using fallback controller.', err);
+    console.warn(`Policy unavailable for ${policyPath}, using fallback controller.`, err);
   }
+}
+
+async function loadHybridPolicy(): Promise<void> {
+  await loadPolicyFromPath(selectedPolicyPath);
 }
 
 function autoReset(reason: string, fullReset = false): void {
@@ -1448,6 +1565,17 @@ function setupUI(): void {
       <div class="label">Search Countdown</div>
       <div class="value" id="mission-countdown">05:00</div>
     </div>
+    <div class="row top-gap" style="border-top: 1px solid #0a3a4a; padding-top: 10px;">
+      <div class="label">Policy</div>
+      <div class="value" id="policy-source-label">Hybrid DRL</div>
+    </div>
+    <div style="display: flex; gap: 5px; margin-top: 8px;">
+      <select id="exploration-policy-select" style="width: 100%; padding: 5px; background: #0a1a2a; color: #00ffdd; border: 1px solid #00ffdd;">
+        <option value="trainer/models/dyna_q_policy.json">Dyna-Q (default)</option>
+        <option value="trainer/models/hybrid_drl_explorer_policy.json" selected>Hybrid DRL</option>
+        <option value="trainer/models/vanilla_q_policy.json">Vanilla Q</option>
+      </select>
+    </div>
     <button id="launch-btn">Start Exploration</button>
     <button id="stop-btn">Emergency Stop</button>
 
@@ -1498,80 +1626,162 @@ function setupUI(): void {
     <button id="export-btn">Export Mission Report</button>
   `;
 
-  const launchBtn = document.getElementById('launch-btn')!;
-  const stopBtn = document.getElementById('stop-btn')!;
-  const tspCurrentBtn = document.getElementById('tsp-current-btn')!;
-  const exportBtn = document.getElementById('export-btn')!;
-  const applySpeedBtn = document.getElementById('apply-speed-btn')!;
-  const applyZonesBtn = document.getElementById('apply-zones-btn')!;
-  const addZoneQuickBtn = document.getElementById('add-zone-btn-quick')!;
-  const heatZoneCountInput = document.getElementById('heat-zone-count') as HTMLInputElement;
-  const heatZoneCountVal = document.getElementById('heat-zone-count-val') as HTMLDivElement;
-  const speedInput = document.getElementById('speed-input') as HTMLInputElement;
-  const speedVal = document.getElementById('speed-val') as HTMLDivElement;
-  const camTopBtn = document.getElementById('cam-topdown')!;
-  const camSideBtn = document.getElementById('cam-side')!;
-  const camFollowBtn = document.getElementById('cam-follow')!;
-  const camIsometricBtn = document.getElementById('cam-isometric')!;
-  const camFreelookBtn = document.getElementById('cam-freelook')!;
+  const launchBtn = document.getElementById('launch-btn');
+  const stopBtn = document.getElementById('stop-btn');
+  const tspCurrentBtn = document.getElementById('tsp-current-btn');
+  const exportBtn = document.getElementById('export-btn');
+  const applySpeedBtn = document.getElementById('apply-speed-btn');
+  const applyZonesBtn = document.getElementById('apply-zones-btn');
+  const addZoneQuickBtn = document.getElementById('add-zone-btn-quick');
+  const heatZoneCountInput = document.getElementById('heat-zone-count') as HTMLInputElement | null;
+  const heatZoneCountVal = document.getElementById('heat-zone-count-val') as HTMLDivElement | null;
+  const speedInput = document.getElementById('speed-input') as HTMLInputElement | null;
+  const speedVal = document.getElementById('speed-val') as HTMLDivElement | null;
+  const camTopBtn = document.getElementById('cam-topdown');
+  const camSideBtn = document.getElementById('cam-side');
+  const camFollowBtn = document.getElementById('cam-follow');
+  const camIsometricBtn = document.getElementById('cam-isometric');
+  const camFreelookBtn = document.getElementById('cam-freelook');
+  const explorationPolicySelect = document.getElementById('exploration-policy-select') as HTMLSelectElement | null;
+  const policySourceLabel = document.getElementById('policy-source-label') as HTMLDivElement | null;
+
+  droneStatusEl = document.getElementById('drone-status');
+  missionCountdownEl = document.getElementById('mission-countdown');
+  zonesDiscoveredEl = document.getElementById('zones-discovered');
+  zonesVisitedEl = document.getElementById('zones-visited');
+  distanceValEl = document.getElementById('distance-val');
+  speedValEl = document.getElementById('speed-val');
 
   function updateCameraButtonStyles(): void {
     [camTopBtn, camSideBtn, camFollowBtn, camIsometricBtn, camFreelookBtn].forEach((btn) => {
-      btn.classList.remove('active');
+      btn?.classList.remove('active');
     });
-    if (currentCameraView === 'topdown') camTopBtn.classList.add('active');
-    else if (currentCameraView === 'side') camSideBtn.classList.add('active');
-    else if (currentCameraView === 'follow') camFollowBtn.classList.add('active');
-    else if (currentCameraView === 'isometric') camIsometricBtn.classList.add('active');
-    else if (currentCameraView === 'freelook') camFreelookBtn.classList.add('active');
+    if (currentCameraView === 'topdown') camTopBtn?.classList.add('active');
+    else if (currentCameraView === 'side') camSideBtn?.classList.add('active');
+    else if (currentCameraView === 'follow') camFollowBtn?.classList.add('active');
+    else if (currentCameraView === 'isometric') camIsometricBtn?.classList.add('active');
+    else if (currentCameraView === 'freelook') camFreelookBtn?.classList.add('active');
   }
 
-  camTopBtn.addEventListener('click', () => {
+  camTopBtn?.addEventListener('click', () => {
     currentCameraView = 'topdown';
     updateCameraButtonStyles();
   });
-  camSideBtn.addEventListener('click', () => {
+  camSideBtn?.addEventListener('click', () => {
     currentCameraView = 'side';
     updateCameraButtonStyles();
   });
-  camFollowBtn.addEventListener('click', () => {
+  camFollowBtn?.addEventListener('click', () => {
     currentCameraView = 'follow';
     updateCameraButtonStyles();
   });
-  camIsometricBtn.addEventListener('click', () => {
+  camIsometricBtn?.addEventListener('click', () => {
     currentCameraView = 'isometric';
     updateCameraButtonStyles();
   });
-  camFreelookBtn.addEventListener('click', () => {
+  camFreelookBtn?.addEventListener('click', () => {
     currentCameraView = 'freelook';
     updateCameraButtonStyles();
   });
 
   updateCameraButtonStyles();
 
-  launchBtn.addEventListener('click', () => {
-    if (!isLaunched) {
-      console.log('Starting RL exploration episode...');
-      autoReset('manual-start', true);
+  const policyChoices = [
+    { label: 'Dyna-Q (default)', path: 'trainer/models/dyna_q_policy.json' },
+    { label: 'Hybrid DRL', path: 'trainer/models/hybrid_drl_explorer_policy.json' },
+    { label: 'Vanilla Q', path: 'trainer/models/vanilla_q_policy.json' },
+  ];
+
+  async function refreshExplorationPolicyOptions(): Promise<void> {
+    if (!explorationPolicySelect) return;
+    const currentValue = explorationPolicySelect.value;
+    explorationPolicySelect.innerHTML = '';
+
+    policyChoices.forEach((choice) => {
+      const option = document.createElement('option');
+      option.value = choice.path;
+      option.textContent = choice.label;
+      explorationPolicySelect.appendChild(option);
+    });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/policies`);
+      const policies = await response.json() as string[];
+      policies
+        .filter((policyPath) => policyPath.includes('local_runs'))
+        .forEach((policyPath) => {
+          if (policyChoices.some((choice) => choice.path === policyPath)) return;
+          const option = document.createElement('option');
+          option.value = policyPath;
+          option.textContent = `Local trained: ${policyPath.split(/[\\\/]/).pop() || policyPath}`;
+          explorationPolicySelect.appendChild(option);
+        });
+    } catch (err) {
+      console.warn('Could not load local policy list', err);
+    }
+
+    if (currentValue && Array.from(explorationPolicySelect.options).some((option) => option.value === currentValue)) {
+      explorationPolicySelect.value = currentValue;
+    } else {
+      explorationPolicySelect.value = selectedPolicyPath;
+    }
+
+    const selectedOption = explorationPolicySelect.selectedOptions[0];
+    if (policySourceLabel && selectedOption) {
+      policySourceLabel.textContent = selectedOption.textContent || 'Policy';
+    }
+  }
+
+  void refreshExplorationPolicyOptions();
+
+  explorationPolicySelect?.addEventListener('change', () => {
+    const selectedOption = explorationPolicySelect.selectedOptions[0];
+    if (policySourceLabel && selectedOption) {
+      policySourceLabel.textContent = selectedOption.textContent || 'Policy';
     }
   });
 
-  stopBtn.addEventListener('click', () => {
+  if (launchBtn) {
+    launchBtn.addEventListener('click', async () => {
+      console.log('Launch button clicked; isLaunched=', isLaunched);
+      if (!isLaunched) {
+        console.log('Starting RL exploration episode...');
+        try {
+          const policyPath = explorationPolicySelect?.value || selectedPolicyPath;
+          await loadPolicyFromPath(policyPath);
+          if (policyStatus !== 'ready') {
+            alert(`Failed to load policy: ${policyPath}`);
+            return;
+          }
+          autoReset('manual-start', true);
+        } catch (e) {
+          console.error('autoReset error:', e);
+          alert('Failed to start exploration (see console)');
+        }
+      }
+    });
+  } else {
+    console.warn('Launch button not found when setting up UI');
+  }
+
+  stopBtn?.addEventListener('click', () => {
     droneState.isFlying = false;
     isLaunched = false;
     explorationMode = false;
     missionActive = false;
   });
 
-  applySpeedBtn.addEventListener('click', () => {
+  applySpeedBtn?.addEventListener('click', () => {
+    if (!speedInput) return;
     const requestedSpeed = Math.min(MAX_DRONE_SPEED, Math.max(1, parseFloat(speedInput.value) || droneState.maxSpeed));
     speedInput.value = requestedSpeed.toFixed(1);
     droneState.maxSpeed = requestedSpeed;
-    speedVal.textContent = `${requestedSpeed.toFixed(1)} m/s`;
+    if (speedVal) speedVal.textContent = `${requestedSpeed.toFixed(1)} m/s`;
     console.log(`Drone speed set to ${requestedSpeed.toFixed(1)} m/s`);
   });
 
-  applyZonesBtn.addEventListener('click', () => {
+  applyZonesBtn?.addEventListener('click', () => {
+    if (!heatZoneCountInput || !heatZoneCountVal) return;
     const requestedCount = Math.min(25, Math.max(1, parseInt(heatZoneCountInput.value, 10) || 3));
     heatZoneCountInput.value = String(requestedCount);
     heatZoneCountVal.textContent = String(requestedCount);
@@ -1579,20 +1789,949 @@ function setupUI(): void {
     console.log(`Heat zones regenerated: ${requestedCount}`);
   });
 
-  addZoneQuickBtn.addEventListener('click', () => {
+  addZoneQuickBtn?.addEventListener('click', () => {
     const requestedCount = Math.min(25, heatZoneCount + 1);
-    heatZoneCountInput.value = String(requestedCount);
-    heatZoneCountVal.textContent = String(requestedCount);
+    if (heatZoneCountInput) heatZoneCountInput.value = String(requestedCount);
+    if (heatZoneCountVal) heatZoneCountVal.textContent = String(requestedCount);
     resetHeatZones(requestedCount);
     console.log(`Heat zones increased to ${requestedCount}`);
   });
 
-  tspCurrentBtn.addEventListener('click', () => {
+  tspCurrentBtn?.addEventListener('click', () => {
     showTspPopup(true);
   });
 
-  exportBtn.addEventListener('click', () => {
+  exportBtn?.addEventListener('click', () => {
     downloadMissionPdf();
+  });
+
+  // --- Thermal mapping controls (bin size and offset) ---
+  // Load saved mapping if present
+  try {
+    const saved = localStorage.getItem('thermal_mapping');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (typeof parsed.binSize === 'number') thermalBinSize = parsed.binSize;
+      if (typeof parsed.offset === 'number') thermalOffset = parsed.offset;
+      if (typeof parsed.policyTBins === 'number') policyTBins = parsed.policyTBins;
+    }
+  } catch (e) {
+    console.warn('Failed to load thermal_mapping from localStorage', e);
+  }
+
+  const thermalPanel = document.createElement('div');
+  thermalPanel.style.cssText = 'margin-top:12px; padding:8px; background: rgba(5,12,18,0.6); border: 1px dashed #00606f; border-radius:6px; font-size:12px; color:#bcefff;';
+  thermalPanel.innerHTML = `
+    <div style="color:#00ffcc; font-weight:bold; margin-bottom:6px;">THERMAL MAPPING</div>
+    <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+      <label style="min-width:90px;">Bin Size (°C):</label>
+      <input id="thermal-bin-size" type="number" min="1" max="200" step="1" style="flex:1; background:#05202b; color:#00ffcc; border:1px solid #00ffcc; padding:4px;" value="${thermalBinSize}">
+    </div>
+    <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+      <label style="min-width:90px;">Offset (°C):</label>
+      <input id="thermal-offset" type="number" step="0.1" style="flex:1; background:#05202b; color:#00ffcc; border:1px solid #00ffcc; padding:4px;" value="${thermalOffset}">
+    </div>
+    <div style="display:flex; gap:6px; align-items:center;">
+      <label style="min-width:90px;">Policy T-Bins:</label>
+      <input id="policy-t-bins" type="number" min="1" max="200" step="1" style="width:80px; background:#05202b; color:#00ffcc; border:1px solid #00ffcc; padding:4px;" value="${policyTBins}">
+      <div style="flex:1; color:#89f7ff; font-size:11px; text-align:right;">Controls adjust binning for thermal->policy mapping</div>
+    </div>
+  `;
+
+  controls.appendChild(thermalPanel);
+
+  const thermalBinSizeInput = document.getElementById('thermal-bin-size') as HTMLInputElement | null;
+  const thermalOffsetInput = document.getElementById('thermal-offset') as HTMLInputElement | null;
+  const policyTBinsInput = document.getElementById('policy-t-bins') as HTMLInputElement | null;
+
+  function persistThermalMapping(): void {
+    try {
+      localStorage.setItem('thermal_mapping', JSON.stringify({ binSize: thermalBinSize, offset: thermalOffset, policyTBins }));
+    } catch (e) {
+      console.warn('Failed to persist thermal mapping', e);
+    }
+  }
+
+  thermalBinSizeInput?.addEventListener('change', () => {
+    const v = Math.max(1, Math.floor(Number(thermalBinSizeInput.value) || 12));
+    thermalBinSize = v;
+    thermalBinSizeInput.value = String(v);
+    persistThermalMapping();
+    console.log('thermalBinSize set to', thermalBinSize);
+  });
+
+  thermalOffsetInput?.addEventListener('change', () => {
+    const v = Number(thermalOffsetInput.value) || 0;
+    thermalOffset = v;
+    thermalOffsetInput.value = String(v);
+    persistThermalMapping();
+    console.log('thermalOffset set to', thermalOffset);
+  });
+
+  policyTBinsInput?.addEventListener('change', () => {
+    const v = Math.max(1, Math.floor(Number(policyTBinsInput.value) || policyTBins));
+    policyTBins = v;
+    policyTBinsInput.value = String(v);
+    persistThermalMapping();
+    console.log('policyTBins overridden to', policyTBins);
+  });
+
+
+  // --- Environment Customization Panel ---
+  const envPanel = document.createElement('div');
+  // Make panel scrollable without overlapping other controls
+  envPanel.style.cssText = 'position: relative; margin-top: 12px; padding: 10px; background: rgba(10, 26, 42, 0.88); border: 1px solid #00ffcc; border-radius: 7px; max-height: 52vh; overflow-y: auto; overflow-x: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.45); scrollbar-gutter: stable;';
+  
+  const envTitle = document.createElement('div');
+  envTitle.style.cssText = 'color: #00ffcc; font-weight: bold; margin-bottom: 10px; font-size: 14px;';
+  envTitle.textContent = 'ENVIRONMENT BUILDER - CLICK TO PLACE';
+  envPanel.appendChild(envTitle);
+
+  // Instructions
+  const instrDiv = document.createElement('div');
+  instrDiv.style.cssText = 'color: #bcefff; font-size: 11px; margin-bottom: 8px; padding: 6px; background: rgba(0,0,0,0.3); border-radius: 4px; border-left: 2px solid #00ffcc;';
+  instrDiv.textContent = '1. Select object type  2. Adjust height  3. Click on 3D canvas to place  4. Save when done';
+  envPanel.appendChild(instrDiv);
+
+  // Object type selector
+  const typeRow = document.createElement('div');
+  typeRow.style.cssText = 'margin-bottom: 8px; display: flex; gap: 6px; flex-wrap: wrap;';
+  
+  const typeLabel = document.createElement('span');
+  typeLabel.textContent = 'Add:';
+  typeLabel.style.cssText = 'color: #bcefff; font-size: 12px; align-self: center;';
+  typeRow.appendChild(typeLabel);
+
+  const buildingBtn = document.createElement('button');
+  buildingBtn.textContent = 'Building';
+  buildingBtn.style.cssText = 'padding: 6px 10px; font-size: 11px; background: #003a4a; color: #00ffcc; border: 1px solid #00ffcc; border-radius: 4px; cursor: pointer; font-weight: bold;';
+  typeRow.appendChild(buildingBtn);
+
+  const machineBtn = document.createElement('button');
+  machineBtn.textContent = 'Machine';
+  machineBtn.style.cssText = 'padding: 6px 10px; font-size: 11px; background: #1a3a4a; color: #00ffff; border: 1px solid #00ffff; border-radius: 4px; cursor: pointer;';
+  typeRow.appendChild(machineBtn);
+
+  const pipeBtn = document.createElement('button');
+  pipeBtn.textContent = 'Pipe';
+  pipeBtn.style.cssText = 'padding: 6px 10px; font-size: 11px; background: #1a3a4a; color: #ffaa00; border: 1px solid #ffaa00; border-radius: 4px; cursor: pointer;';
+  typeRow.appendChild(pipeBtn);
+
+  envPanel.appendChild(typeRow);
+
+  // Height control
+  const heightRow = document.createElement('div');
+  heightRow.style.cssText = 'margin-bottom: 8px; display: flex; gap: 6px; align-items: center;';
+  
+  const heightLabel = document.createElement('span');
+  heightLabel.textContent = 'Height:';
+  heightLabel.style.cssText = 'color: #bcefff; font-size: 12px; min-width: 50px;';
+  heightRow.appendChild(heightLabel);
+
+  const heightInput = document.createElement('input');
+  heightInput.type = 'range';
+  heightInput.min = '1';
+  heightInput.max = '50';
+  heightInput.value = '10';
+  heightInput.style.cssText = 'flex: 1; cursor: pointer;';
+  heightRow.appendChild(heightInput);
+
+  const heightVal = document.createElement('span');
+  heightVal.textContent = '10 units';
+  heightVal.style.cssText = 'color: #bcefff; font-size: 12px; min-width: 70px; text-align: right;';
+  heightRow.appendChild(heightVal);
+
+  envPanel.appendChild(heightRow);
+
+  // Coordinates display
+  const coordDiv = document.createElement('div');
+  coordDiv.style.cssText = 'margin-bottom: 8px; padding: 6px; background: rgba(0,0,0,0.3); border-radius: 4px; font-size: 11px; color: #00ffcc;';
+  coordDiv.innerHTML = '<strong>Mouse Coords:</strong> X: 0.0, Z: 0.0 | <strong>Mode:</strong> <span style="color: #00ffcc;">Building</span>';
+  envPanel.appendChild(coordDiv);
+
+  // Environment objects list
+  const objListLabel = document.createElement('div');
+  objListLabel.textContent = 'Custom Objects:';
+  objListLabel.style.cssText = 'color: #00ffcc; font-size: 12px; margin-top: 10px; margin-bottom: 6px;';
+  envPanel.appendChild(objListLabel);
+
+  const objList = document.createElement('div');
+  objList.style.cssText = 'max-height: 100px; overflow-y: auto; background: rgba(0, 0, 0, 0.5); padding: 6px; border-radius: 4px; font-size: 11px; color: #bcefff;';
+  objList.innerHTML = 'No objects added';
+  envPanel.appendChild(objList);
+
+  // Save/Load buttons
+  const saveLoadRow = document.createElement('div');
+  saveLoadRow.style.cssText = 'margin-top: 10px; display: flex; gap: 6px; justify-content: space-between;';
+
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = 'Clear All';
+  clearBtn.style.cssText = 'flex: 1; padding: 8px; background: #3a1a1a; color: #ff6666; border: 1px solid #ff6666; border-radius: 4px; cursor: pointer; font-size: 11px;';
+  saveLoadRow.appendChild(clearBtn);
+
+  const clearBuildingsBtn = document.createElement('button');
+  clearBuildingsBtn.textContent = 'Clear Buildings';
+  clearBuildingsBtn.style.cssText = 'flex: 1; padding: 8px; background: #2a2a1a; color: #ffcf7a; border: 1px solid #ffcf7a; border-radius: 4px; cursor: pointer; font-size: 11px;';
+  saveLoadRow.appendChild(clearBuildingsBtn);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save Environment';
+  saveBtn.style.cssText = 'flex: 1; padding: 8px; background: #1a3a2a; color: #00ffaa; border: 1px solid #00ffaa; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;';
+  saveLoadRow.appendChild(saveBtn);
+
+  const loadBtn = document.createElement('button');
+  loadBtn.textContent = 'Load Saved';
+  loadBtn.style.cssText = 'flex: 1; padding: 8px; background: #1a2a3a; color: #00aaff; border: 1px solid #00aaff; border-radius: 4px; cursor: pointer; font-size: 11px;';
+  saveLoadRow.appendChild(loadBtn);
+
+  envPanel.appendChild(saveLoadRow);
+
+  const trainingTitle = document.createElement('div');
+  trainingTitle.style.cssText = 'color: #ffcf7a; font-weight: bold; margin: 14px 0 8px; font-size: 13px; border-top: 1px solid rgba(255,207,122,0.35); padding-top: 10px;';
+  trainingTitle.textContent = 'TRAINING LAUNCHER';
+  envPanel.appendChild(trainingTitle);
+
+  // Policy selector (available policies + current)
+  const policyRow = document.createElement('div');
+  policyRow.style.cssText = 'display:flex; gap:6px; align-items:center; margin-bottom:8px;';
+  const policyLabel = document.createElement('span');
+  policyLabel.textContent = 'Policy:';
+  policyLabel.style.cssText = 'color:#bcefff; font-size:12px; min-width:48px;';
+  policyRow.appendChild(policyLabel);
+  const policySelect = document.createElement('select');
+  policySelect.style.cssText = 'flex:1; min-width:180px; padding:6px; background:#05202b; color:#00ffcc; border:1px solid #00ffcc; border-radius:4px;';
+  policyRow.appendChild(policySelect);
+  const activateBeforeBtn = document.createElement('button');
+  activateBeforeBtn.textContent = 'Activate before run';
+  activateBeforeBtn.style.cssText = 'padding:6px 8px; font-size:11px; background:#003a4a; color:#00ffcc; border:1px solid #00ffcc; border-radius:4px; cursor:pointer;';
+  policyRow.appendChild(activateBeforeBtn);
+  envPanel.appendChild(policyRow);
+
+  // Load policies from server and add predefined policy options
+  async function refreshPolicies() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/policies`);
+      const list: string[] = await res.json();
+      policySelect.innerHTML = '';
+
+      // Predefined policy choices (will appear first)
+      const predefined = [
+        { label: 'Dyna-Q (default)', path: 'trainer/models/dyna_q_policy.json' },
+        { label: 'Hybrid DRL (hybrid_drl_explorer)', path: 'trainer/models/hybrid_drl_explorer_policy.json' },
+        { label: 'Vanilla Q (vanilla_q_policy)', path: 'trainer/models/vanilla_q_policy.json' },
+      ];
+      predefined.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.path;
+        opt.textContent = p.label;
+        policySelect.appendChild(opt);
+      });
+
+      // add current marker (if different)
+      try {
+        const curRes = await fetch(`${API_BASE_URL}/api/policy/current`);
+        const cur = await curRes.json();
+        if (cur.exists && cur.path) {
+          const curPath = cur.path as string;
+          // avoid duplicate
+          if (!predefined.find(p => p.path === curPath)) {
+            const opt = document.createElement('option');
+            opt.value = curPath;
+            opt.textContent = `Default (current): ${curPath.split('/').pop() || curPath}`;
+            policySelect.appendChild(opt);
+          }
+        }
+      } catch (err) {
+        // ignore
+      }
+
+      // add discovered policies (local runs, backups)
+      list.forEach(p => {
+        // skip duplicates
+        const exists = Array.from(policySelect.options).some(o => o.value === p);
+        if (exists) return;
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p.split(/[\\\/]/).pop() || p;
+        policySelect.appendChild(opt);
+      });
+
+      // try to select latest local_runs if present
+      const localOpt = list.find(p => p.includes('local_runs'));
+      if (localOpt) policySelect.value = localOpt;
+    } catch (e) {
+      console.warn('Could not refresh policies', e);
+    }
+  }
+  void refreshPolicies();
+
+  activateBeforeBtn.addEventListener('click', async () => {
+    const path = policySelect.value;
+    if (!path) return;
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/policies/activate`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ path }) });
+      const j = await r.json();
+      if (j.ok) {
+        trainingStatus.textContent = `Activated policy: ${path.split(/[\\\/]/).pop()}`;
+      } else {
+        trainingStatus.textContent = `Failed to activate policy: ${JSON.stringify(j)}`;
+      }
+    } catch (err) {
+      trainingStatus.textContent = `Activate error: ${String(err)}`;
+    }
+  });
+
+  const presetRow = document.createElement('div');
+  presetRow.style.cssText = 'display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px;';
+  const presetLabel = document.createElement('span');
+  presetLabel.textContent = 'Preset:';
+  presetLabel.style.cssText = 'color: #bcefff; font-size: 12px; min-width: 48px;';
+  presetRow.appendChild(presetLabel);
+  const presetSelect = document.createElement('select');
+  presetSelect.style.cssText = 'flex: 1; min-width: 140px; padding: 6px; background: #05202b; color: #00ffcc; border: 1px solid #00ffcc; border-radius: 4px;';
+  presetSelect.innerHTML = `
+    <option value="current">Current saved environment</option>
+    <option value="empty">Empty environment</option>
+    <option value="building_cluster">Building cluster</option>
+    <option value="industrial_mix">Industrial mix</option>
+    <option value="pipe_corridor">Pipe corridor</option>
+  `;
+  presetRow.appendChild(presetSelect);
+  const applyPresetBtn = document.createElement('button');
+  applyPresetBtn.textContent = 'Apply';
+  applyPresetBtn.style.cssText = 'padding: 6px 10px; font-size: 11px; background: #003a4a; color: #00ffcc; border: 1px solid #00ffcc; border-radius: 4px; cursor: pointer; font-weight: bold;';
+  presetRow.appendChild(applyPresetBtn);
+  envPanel.appendChild(presetRow);
+
+  const modeRow = document.createElement('div');
+  modeRow.style.cssText = 'display:flex; gap:6px; align-items:center; flex-wrap: wrap; margin-bottom: 8px;';
+  const modeLabel = document.createElement('span');
+  modeLabel.textContent = 'Mode:';
+  modeLabel.style.cssText = 'color:#bcefff; font-size:12px; min-width:48px;';
+  modeRow.appendChild(modeLabel);
+  const trainingModeSelect = document.createElement('select');
+  trainingModeSelect.style.cssText = 'flex:1; min-width:140px; padding: 6px; background: #05202b; color: #00ffcc; border: 1px solid #00ffcc; border-radius: 4px;';
+  trainingModeSelect.innerHTML = `
+    <option value="kaggle">Kaggle Training</option>
+    <option value="local">Local Training (train_dyna_q.py)</option>
+  `;
+  modeRow.appendChild(trainingModeSelect);
+  envPanel.appendChild(modeRow);
+
+  const mapRow = document.createElement('div');
+  mapRow.style.cssText = 'display:flex; gap:6px; align-items:center; flex-wrap: wrap; margin-bottom: 8px;';
+  const mapLabel = document.createElement('span');
+  mapLabel.textContent = 'Map:';
+  mapLabel.style.cssText = 'color:#bcefff; font-size:12px; min-width:48px;';
+  mapRow.appendChild(mapLabel);
+  const mapInput = document.createElement('input');
+  mapInput.type = 'text';
+  mapInput.value = 'sample_map.png';
+  mapInput.placeholder = 'sample_map.png';
+  mapInput.style.cssText = 'flex:1; min-width: 180px; padding: 6px; background: #05202b; color: #dfeffa; border: 1px solid #00aaff; border-radius: 4px;';
+  mapRow.appendChild(mapInput);
+  envPanel.appendChild(mapRow);
+
+  const projectRow = document.createElement('div');
+  projectRow.style.cssText = 'display:flex; gap:6px; align-items:center; flex-wrap: wrap; margin-bottom: 8px;';
+  const projectLabel = document.createElement('span');
+  projectLabel.textContent = 'Project:';
+  projectLabel.style.cssText = 'color:#bcefff; font-size:12px; min-width:48px;';
+  projectRow.appendChild(projectLabel);
+  const projectInput = document.createElement('input');
+  projectInput.type = 'text';
+  projectInput.value = 'project01';
+  projectInput.placeholder = 'project01';
+  projectInput.style.cssText = 'flex:1; min-width: 180px; padding: 6px; background: #05202b; color: #dfeffa; border: 1px solid #00aaff; border-radius: 4px;';
+  projectRow.appendChild(projectInput);
+  envPanel.appendChild(projectRow);
+
+  const apiRow = document.createElement('div');
+  apiRow.style.cssText = 'display:flex; gap:6px; align-items:center; flex-wrap: wrap; margin-bottom: 8px;';
+  const apiLabel = document.createElement('span');
+  apiLabel.textContent = 'Key:';
+  apiLabel.style.cssText = 'color:#bcefff; font-size:12px; min-width:48px;';
+  apiRow.appendChild(apiLabel);
+  const useDefaultSelect = document.createElement('select');
+  useDefaultSelect.style.cssText = 'padding: 6px; background: #05202b; color: #00ffcc; border: 1px solid #00ffcc; border-radius: 4px;';
+  useDefaultSelect.innerHTML = `
+    <option value="true">Use repository default</option>
+    <option value="false">Use pasted token</option>
+  `;
+  apiRow.appendChild(useDefaultSelect);
+  const tokenInput = document.createElement('input');
+  tokenInput.type = 'password';
+  tokenInput.placeholder = 'Kaggle API token';
+  tokenInput.style.cssText = 'flex:1; min-width: 180px; padding: 6px; background: #05202b; color: #dfeffa; border: 1px solid #00aaff; border-radius: 4px;';
+  apiRow.appendChild(tokenInput);
+  envPanel.appendChild(apiRow);
+
+  const updateModeUI = () => {
+    const localMode = trainingModeSelect.value === 'local';
+    mapInput.disabled = localMode;
+    tokenInput.disabled = localMode;
+    useDefaultSelect.disabled = localMode;
+    mapLabel.style.opacity = localMode ? '0.55' : '1';
+    apiLabel.style.opacity = localMode ? '0.55' : '1';
+  };
+  trainingModeSelect.addEventListener('change', updateModeUI);
+  updateModeUI();
+
+  const rlRow = document.createElement('div');
+  rlRow.style.cssText = 'display:flex; gap:6px; flex-wrap: wrap; margin-bottom: 8px;';
+  const makeNumberField = (labelText: string, initialValue: string) => {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'display:flex; gap:4px; align-items:center;';
+    const label = document.createElement('span');
+    label.textContent = labelText;
+    label.style.cssText = 'color:#bcefff; font-size:12px;';
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.value = initialValue;
+    input.style.cssText = 'width:92px; padding:6px; background:#05202b; color:#dfeffa; border:1px solid #00aaff; border-radius:4px;';
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+    rlRow.appendChild(wrapper);
+    return input;
+  };
+  const trainSecondsInput = makeNumberField('Sec', '5400');
+  const planningStepsInput = makeNumberField('Plan', '60');
+  const episodesInput = makeNumberField('Episodes', '15000');
+  envPanel.appendChild(rlRow);
+
+  const launchRow = document.createElement('div');
+  launchRow.style.cssText = 'display:flex; gap:6px; align-items:flex-start; flex-wrap: wrap; margin-top: 6px;';
+  const trainingLaunchBtn = document.createElement('button');
+  trainingLaunchBtn.textContent = 'Start Training';
+  trainingLaunchBtn.style.cssText = 'padding: 10px 14px; background: linear-gradient(135deg, #00ffcc, #00aaff); color: #051521; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;';
+  launchRow.appendChild(trainingLaunchBtn);
+  const trainingStatus = document.createElement('pre');
+  trainingStatus.style.cssText = 'flex:1; min-width: 220px; margin: 0; background: rgba(0, 0, 0, 0.38); color: #dfeffa; padding: 8px; border-radius: 6px; font-size: 11px; white-space: pre-wrap;';
+  trainingStatus.textContent = 'No training run started yet.';
+  launchRow.appendChild(trainingStatus);
+  envPanel.appendChild(launchRow);
+  controls.appendChild(envPanel);
+
+  // Environment data structure
+  let environmentObjects: CustomEnvironmentObject[] = [];
+  let selectedObjectType = 'building';
+  const cloneEnvironmentObject = (obj: CustomEnvironmentObject): CustomEnvironmentObject => ({
+    type: obj.type,
+    height: obj.height,
+    x: obj.x,
+    z: obj.z,
+    width: obj.width,
+    depth: obj.depth,
+  });
+  const serializeEnvironmentObjects = (objects: CustomEnvironmentObject[]): CustomEnvironmentObject[] => objects.map(cloneEnvironmentObject);
+  const loadSavedEnvironmentObjects = (): CustomEnvironmentObject[] => {
+    const saved = localStorage.getItem('default_environment');
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((obj: CustomEnvironmentObject) => cloneEnvironmentObject(obj));
+    } catch {
+      return [];
+    }
+  };
+  const buildPresetEnvironmentObjects = (preset: string): CustomEnvironmentObject[] => {
+    if (preset === 'empty') return [];
+    if (preset === 'building_cluster') {
+      return [
+        { type: 'building', height: 18, x: -22, z: -8 },
+        { type: 'building', height: 24, x: -8, z: 10 },
+        { type: 'building', height: 15, x: 12, z: -6 },
+        { type: 'machine', height: 10, x: 20, z: 14 },
+      ];
+    }
+    if (preset === 'industrial_mix') {
+      return [
+        { type: 'building', height: 20, x: -26, z: -18 },
+        { type: 'machine', height: 12, x: -6, z: -10 },
+        { type: 'pipe', height: 14, x: 9, z: 6 },
+        { type: 'building', height: 16, x: 24, z: 18 },
+        { type: 'pipe', height: 12, x: -14, z: 20 },
+      ];
+    }
+    if (preset === 'pipe_corridor') {
+      return [
+        { type: 'pipe', height: 18, x: -20, z: -20 },
+        { type: 'pipe', height: 18, x: -6, z: -6 },
+        { type: 'pipe', height: 18, x: 8, z: 8 },
+        { type: 'building', height: 14, x: 18, z: 18 },
+      ];
+    }
+    return [
+      { type: 'building', height: 18, x: -18, z: -12 },
+      { type: 'machine', height: 10, x: 8, z: 6 },
+      { type: 'pipe', height: 12, x: 18, z: -4 },
+    ];
+  };
+  const getStableBuildingFootprint = (x: number, z: number, height: number): { width: number; depth: number } => {
+    const seed = Math.sin(x * 12.9898 + z * 78.233 + height * 37.719) * 43758.5453;
+    const frac = seed - Math.floor(seed);
+    const secondSeed = Math.sin(x * 93.9898 + z * 67.345 + height * 11.113) * 24634.6345;
+    const frac2 = secondSeed - Math.floor(secondSeed);
+    return {
+      width: 8 + frac * 4,
+      depth: 8 + frac2 * 4,
+    };
+  };
+  // Function to create 3D object mesh
+  const createObjectMesh = (obj: CustomEnvironmentObject): THREE.Group => {
+    const group = new THREE.Group();
+    const { type, height, x, z } = obj;
+    
+    if (type === 'building') {
+      // Main structure - match old building style
+      const industryPalette = [0x3a5f78, 0x436f8b, 0x447a6e, 0x746b4d, 0x5e4f74, 0x7e4b56];
+      const baseColor = industryPalette[Math.floor(Math.random() * industryPalette.length)];
+      const footprint = getStableBuildingFootprint(x, z, height);
+      const width = obj.width ?? footprint.width;
+      const depth = obj.depth ?? footprint.depth;
+      
+      const struct = new THREE.Mesh(
+        new THREE.BoxGeometry(width, height, depth),
+        new THREE.MeshStandardMaterial({
+          color: baseColor,
+          roughness: 0.52,
+          metalness: 0.48,
+          emissive: 0x0b2032,
+          emissiveIntensity: 0.12,
+        }),
+      );
+      struct.position.set(0, height / 2, 0);
+      struct.castShadow = true;
+      struct.receiveShadow = true;
+      group.add(struct);
+      
+      // Roof ring
+      const roofRing = new THREE.Mesh(
+        new THREE.RingGeometry(Math.min(width, depth) * 0.16, Math.min(width, depth) * 0.35, 20),
+        new THREE.MeshBasicMaterial({ color: 0x19d4ff, transparent: true, opacity: 0.18 }),
+      );
+      roofRing.rotation.x = -Math.PI / 2;
+      roofRing.position.set(0, height + 0.65, 0);
+      group.add(roofRing);
+      
+      // Side tank
+      const sideTank = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.8, 1.8, Math.max(6, height * 0.45), 14),
+        new THREE.MeshStandardMaterial({ color: 0x8ea3b4, roughness: 0.38, metalness: 0.58, emissive: 0x1e2328, emissiveIntensity: 0.1 }),
+      );
+      sideTank.position.set(width * 0.34, Math.max(6, height * 0.45) / 2, -depth * 0.34);
+      sideTank.castShadow = true;
+      group.add(sideTank);
+      
+      // Catwalk
+      const catwalk = new THREE.Mesh(
+        new THREE.BoxGeometry(width * 0.78, 0.35, 1.4),
+        new THREE.MeshStandardMaterial({ color: 0x94b7c9, roughness: 0.42, metalness: 0.55 }),
+      );
+      catwalk.position.set(0, height * 0.62, depth * 0.52);
+      group.add(catwalk);
+      
+      // Warning lamp
+      const warningLamp = new THREE.PointLight(Math.random() > 0.5 ? 0xff8a3d : 0x24d2ff, 0.7, 60);
+      warningLamp.position.set(0, height + 5, 0);
+      group.add(warningLamp);
+      
+      
+    } else if (type === 'machine') {
+      // Machine - cylinder with enhanced look
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(4, 4, height, 8),
+        new THREE.MeshStandardMaterial({color: 0x00ffff, emissive: 0x00ffff, emissiveIntensity: 0.3, roughness: 0.4, metalness: 0.6})
+      );
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      
+      // Glow light
+      const glow = new THREE.PointLight(0x00ffff, 0.5, 50);
+      glow.position.set(0, height / 2, 0);
+      group.add(glow);
+      
+    } else if (type === 'pipe') {
+      // Pipe - thin cylinder with glow
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.5, 1.5, height, 6),
+        new THREE.MeshStandardMaterial({color: 0xffaa00, emissive: 0xffaa00, emissiveIntensity: 0.4, roughness: 0.3, metalness: 0.7})
+      );
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      
+      // Glow light
+      const glow = new THREE.PointLight(0xff8a3d, 0.6, 40);
+      glow.position.set(0, height / 2, 0);
+      group.add(glow);
+    }
+    
+    group.position.set(x, 0, z);
+    return group;
+  };
+
+  // Function to update 3D environment
+  const updateEnvironmentVisualization = () => {
+    // Remove old custom object meshes without mutating the live array while iterating forward
+    for (let i = customObjectsGroup.children.length - 1; i >= 0; i--) {
+      const child = customObjectsGroup.children[i];
+      if (child !== customObjectsGroup.children[0]) {
+        customObjectsGroup.remove(child);
+      }
+    }
+    
+    // Clear custom building collision fields
+    customBuildingFields = [];
+    
+    // Add all objects to scene and track buildings for collision
+    environmentObjects.forEach(obj => {
+      if (obj.type === 'building' && (obj.width === undefined || obj.depth === undefined)) {
+        const footprint = getStableBuildingFootprint(obj.x, obj.z, obj.height);
+        obj.width = footprint.width;
+        obj.depth = footprint.depth;
+      }
+
+      const mesh = createObjectMesh(obj);
+      obj.mesh = mesh;
+      customObjectsGroup.add(mesh);
+      
+      // Track buildings for collision detection
+      if (obj.type === 'building') {
+        const width = obj.width ?? 8;
+        const depth = obj.depth ?? 8;
+        customBuildingFields.push({
+          x: obj.x,
+          z: obj.z,
+          radius: Math.max(width, depth) * 0.72 + 6,
+        });
+      }
+    });
+  };
+
+  const updateObjectList = () => {
+    if (environmentObjects.length === 0) {
+      objList.innerHTML = 'No objects added';
+    } else {
+      objList.innerHTML = '';
+      environmentObjects.forEach((obj, idx) => {
+        const colors: any = {building: '#00ffcc', machine: '#00ffff', pipe: '#ffaa00'};
+        const itemDiv = document.createElement('div');
+        itemDiv.style.cssText = `color: ${colors[obj.type]}; margin: 4px 0; display: flex; justify-content: space-between; align-items: center;`;
+        
+        const textSpan = document.createElement('span');
+        textSpan.textContent = `${idx + 1}. ${obj.type.toUpperCase()} (h: ${obj.height}u) @ (${obj.x.toFixed(1)}, ${obj.z.toFixed(1)})`;
+        itemDiv.appendChild(textSpan);
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.textContent = 'remove';
+        removeBtn.style.cssText = 'background: none; border: none; color: #ff6666; cursor: pointer; font-size: 10px; padding: 0; margin: 0;';
+        removeBtn.addEventListener('click', () => {
+          environmentObjects.splice(idx, 1);
+          updateObjectList();
+          updateEnvironmentVisualization();
+        });
+        itemDiv.appendChild(removeBtn);
+        objList.appendChild(itemDiv);
+      });
+    }
+  };
+
+  // Button handlers
+  buildingBtn.addEventListener('click', () => {
+    selectedObjectType = 'building';
+    buildingBtn.style.background = '#003a4a';
+    machineBtn.style.background = '#1a3a4a';
+    pipeBtn.style.background = '#1a3a4a';
+    coordDiv.innerHTML = '<strong>Mouse Coords:</strong> X: 0.0, Z: 0.0 | <strong>Mode:</strong> <span style="color: #00ffcc;">Building</span>';
+  });
+
+  machineBtn.addEventListener('click', () => {
+    selectedObjectType = 'machine';
+    buildingBtn.style.background = '#1a3a4a';
+    machineBtn.style.background = '#003a4a';
+    pipeBtn.style.background = '#1a3a4a';
+    coordDiv.innerHTML = '<strong>Mouse Coords:</strong> X: 0.0, Z: 0.0 | <strong>Mode:</strong> <span style="color: #00ffff;">Machine</span>';
+  });
+
+  pipeBtn.addEventListener('click', () => {
+    selectedObjectType = 'pipe';
+    buildingBtn.style.background = '#1a3a4a';
+    machineBtn.style.background = '#1a3a4a';
+    pipeBtn.style.background = '#3a2a1a';
+    coordDiv.innerHTML = '<strong>Mouse Coords:</strong> X: 0.0, Z: 0.0 | <strong>Mode:</strong> <span style="color: #ffaa00;">Pipe</span>';
+  });
+
+  heightInput.addEventListener('input', () => {
+    const h = parseInt(heightInput.value);
+    heightVal.textContent = `${h} units`;
+  });
+
+  // Create invisible ground plane for raycasting
+  const groundPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(WORLD_SIZE * 2.5, WORLD_SIZE * 2.5),
+    new THREE.MeshBasicMaterial({transparent: true, opacity: 0})
+  );
+  groundPlane.rotation.x = -Math.PI / 2;
+  groundPlane.position.y = 0.01;
+  customObjectsGroup.add(groundPlane);
+
+  // Click to place on canvas
+  canvas.addEventListener('click', (e: MouseEvent) => {
+    if (!selectedObjectType) return;
+    
+    // Calculate mouse position
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+    // Raycasting
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObject(groundPlane);
+
+    if (intersects.length > 0) {
+      const point = intersects[0].point;
+      const x = point.x;
+      const z = point.z;
+      const height = parseInt(heightInput.value);
+
+      environmentObjects.push({
+        type: selectedObjectType,
+        height: height,
+        x: x,
+        z: z
+      });
+      updateObjectList();
+      updateEnvironmentVisualization();
+      console.log(`Added ${selectedObjectType} at (${x.toFixed(1)}, ${z.toFixed(1)}) height ${height}`);
+    }
+  });
+
+  // Track mouse movement for coordinate display
+  canvas.addEventListener('mousemove', (e: MouseEvent) => {
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObject(groundPlane);
+
+    if (intersects.length > 0) {
+      const point = intersects[0].point;
+      const modeColors: any = {building: '#00ffcc', machine: '#00ffff', pipe: '#ffaa00'};
+      const modeColor = modeColors[selectedObjectType];
+      coordDiv.innerHTML = `<strong>Mouse Coords:</strong> X: ${point.x.toFixed(1)}, Z: ${point.z.toFixed(1)} | <strong>Mode:</strong> <span style="color: ${modeColor};">${selectedObjectType.toUpperCase()}</span>`;
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    if (confirm('Clear all custom objects?')) {
+      environmentObjects = [];
+      updateObjectList();
+      updateEnvironmentVisualization();
+    }
+  });
+
+  clearBuildingsBtn.addEventListener('click', () => {
+    const buildingCount = environmentObjects.filter(obj => obj.type === 'building').length;
+    if (buildingCount === 0) {
+      alert('No buildings found in the current environment.');
+      return;
+    }
+    if (confirm(`Remove ${buildingCount} building object(s) and keep the ground / other objects?`)) {
+      environmentObjects = environmentObjects.filter(obj => obj.type !== 'building');
+      updateObjectList();
+      updateEnvironmentVisualization();
+    }
+  });
+
+  saveBtn.addEventListener('click', () => {
+    localStorage.setItem('default_environment', JSON.stringify(environmentObjects));
+    alert(`Saved ${environmentObjects.length} objects. Ready to test drone!`);
+  });
+
+  loadBtn.addEventListener('click', () => {
+    const saved = localStorage.getItem('default_environment');
+    if (saved) {
+      try {
+        environmentObjects = JSON.parse(saved);
+        updateObjectList();
+        updateEnvironmentVisualization();
+        alert(`Loaded ${environmentObjects.length} objects`);
+      } catch (e) {
+        alert('Error loading environment');
+      }
+    } else {
+      alert('No saved environment found');
+    }
+  });
+
+  applyPresetBtn.addEventListener('click', () => {
+    const preset = presetSelect.value;
+    if (preset === 'current') {
+      environmentObjects = serializeEnvironmentObjects(loadSavedEnvironmentObjects());
+    } else {
+      environmentObjects = serializeEnvironmentObjects(buildPresetEnvironmentObjects(preset));
+    }
+    updateObjectList();
+    updateEnvironmentVisualization();
+    localStorage.setItem('default_environment', JSON.stringify(environmentObjects));
+    trainingStatus.textContent = `Applied preset: ${preset}\nObjects in environment: ${environmentObjects.length}`;
+  });
+
+  const environmentSpecFromCurrentState = (preset: string) => {
+    const activeObjects = environmentObjects.length > 0 ? environmentObjects : loadSavedEnvironmentObjects();
+    return {
+      project_id: (projectInput.value || 'project01').trim(),
+      source: environmentObjects.length > 0 ? 'live-builder' : 'saved-localstorage',
+      preset,
+      grid: {
+        width: 40,
+        height: 40,
+        cell_size: 3,
+      },
+      rendering: {
+        wall_height: Math.max(8, Math.round(activeObjects.reduce((maxHeight, obj) => Math.max(maxHeight, obj.height), 12))),
+        floor_material: 'concrete',
+        wall_material: 'steel',
+        lighting_profile: 'industrial-default',
+        fog_density: 0.004,
+      },
+      optimization: {
+        merge_static_geometry: true,
+        use_instancing: true,
+        enable_lod: true,
+        target_fps: 60,
+        max_draw_calls: Math.max(120, 260 - activeObjects.length * 4),
+      },
+      objects: serializeEnvironmentObjects(activeObjects),
+    };
+  };
+
+  trainingLaunchBtn.addEventListener('click', async () => {
+    const projectId = (projectInput.value || 'project01').trim();
+    const mapImage = (mapInput.value || 'sample_map.png').trim();
+    const useDefaultKey = useDefaultSelect.value === 'true';
+    const token = tokenInput.value.trim();
+    const trainingMode = trainingModeSelect.value;
+    const environmentName = presetSelect.value;
+    const environmentSpec = environmentSpecFromCurrentState(environmentName);
+    const trainSeconds = parseInt(trainSecondsInput.value || '5400');
+
+    const payload = {
+      mapImage,
+      projectId,
+      useDefaultKey,
+      token,
+      trainSeconds: String(trainSeconds),
+      planningSteps: planningStepsInput.value || '60',
+      episodes: episodesInput.value || '15000',
+      waitKernel: true,
+      environmentName,
+      environmentSpec,
+    };
+
+    const endpoint = trainingMode === 'local' ? `${API_BASE_URL}/api/local/start` : `${API_BASE_URL}/api/kaggle/start`;
+    const summaryMode = trainingMode === 'local' ? 'LOCAL' : 'KAGGLE';
+
+    trainingStatus.textContent = `Starting ${summaryMode} training...\nProject: ${projectId}\nPreset: ${environmentName}\nObjects: ${environmentSpec.objects.length}`;
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const startData = await response.json();
+      const runId = startData.id;
+      
+      if (!runId) {
+        trainingStatus.textContent = `Error: No run ID returned\n${JSON.stringify(startData)}`;
+        return;
+      }
+
+      // Start polling for log updates
+      let isTrainingActive = true;
+      let pollCount = 0;
+      const pollInterval = setInterval(async () => {
+        try {
+          const logResponse = await fetch(`${API_BASE_URL}/api/kaggle/run/${runId}/log`);
+          const logData = await logResponse.json();
+          const { log, meta } = logData;
+          pollCount++;
+
+          if (!meta) {
+            trainingStatus.textContent = `Error: No metadata received`;
+            clearInterval(pollInterval);
+            return;
+          }
+
+          // Calculate elapsed time and progress
+          const createdAt = new Date(meta.createdAt).getTime();
+          const now = Date.now();
+          const elapsedSeconds = Math.floor((now - createdAt) / 1000);
+          const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+          const elapsedHours = Math.floor(elapsedMinutes / 60);
+          
+          const progressPercent = Math.min(100, Math.round((elapsedSeconds / trainSeconds) * 100));
+          const timeRemain = Math.max(0, trainSeconds - elapsedSeconds);
+          const remainMinutes = Math.floor(timeRemain / 60);
+          const remainSeconds = timeRemain % 60;
+
+          // Extract last N lines from log for display
+          const logLines = log.split('\n');
+          const lastLines = logLines.slice(-12).join('\n');
+
+          let statusText = `[${summaryMode} TRAINING IN PROGRESS]\n`;
+          statusText += `Run ID: ${runId}\n`;
+          statusText += `Status: ${meta.status || 'unknown'}\n`;
+          statusText += `Elapsed: ${String(elapsedHours).padStart(2,'0')}:${String(elapsedMinutes % 60).padStart(2,'0')}:${String(elapsedSeconds % 60).padStart(2,'0')} / ${Math.floor(trainSeconds / 3600)}h${Math.floor((trainSeconds % 3600) / 60)}m\n`;
+          statusText += `Progress: ${progressPercent}% [${Array(Math.floor(progressPercent / 5)).fill('=').join('')}${Array(20 - Math.floor(progressPercent / 5)).fill('-').join('')}]\n`;
+          if (timeRemain > 0) {
+            statusText += `ETA: ${String(remainMinutes).padStart(2,'0')}:${String(remainSeconds).padStart(2,'0')} remaining\n`;
+          }
+          statusText += `\n--- Recent Logs (Last 12 lines) ---\n${lastLines}`;
+
+          trainingStatus.textContent = statusText;
+
+          // Check if training is complete
+          if (meta.status === 'complete' || meta.status === 'error') {
+            clearInterval(pollInterval);
+            isTrainingActive = false;
+
+            // Display completion details
+            let completionText = `[${summaryMode.toUpperCase()} TRAINING COMPLETE]\n`;
+            completionText += `Run ID: ${runId}\n`;
+            completionText += `Status: ${meta.status.toUpperCase()}\n`;
+            completionText += `Exit Code: ${meta.exitCode !== undefined ? meta.exitCode : 'N/A'}\n`;
+            
+            const finishedAt = meta.finishedAt ? new Date(meta.finishedAt).getTime() : now;
+            const totalElapsed = Math.floor((finishedAt - createdAt) / 1000);
+            const totalHours = Math.floor(totalElapsed / 3600);
+            const totalMins = Math.floor((totalElapsed % 3600) / 60);
+            const totalSecs = totalElapsed % 60;
+            completionText += `Total Time: ${String(totalHours).padStart(2,'0')}:${String(totalMins).padStart(2,'0')}:${String(totalSecs).padStart(2,'0')}\n`;
+            
+            if (meta.policyOutputPath) {
+              completionText += `Policy Saved: ${meta.policyOutputPath.split(/[\\\/]/).pop()}\n`;
+            }
+            
+            completionText += `\n--- Full Training Logs ---\n${log}`;
+            
+            if (meta.status === 'complete' && meta.policyOutputPath) {
+              completionText += `\n\n[ACTIONS]\nPolicy generated and ready to activate.\n`;
+            }
+            
+            trainingStatus.textContent = completionText;
+          }
+        } catch (pollErr) {
+          trainingStatus.textContent = `Polling error: ${String(pollErr)}\nWill continue polling...`;
+        }
+      }, 1500); // Poll every 1.5 seconds
+
+    } catch (err) {
+      trainingStatus.textContent = `Failed to start training:\n${String(err)}`;
+    }
   });
 }
 
@@ -1613,7 +2752,6 @@ function animate(): void {
     }
   }
 
-  setupUI();
   if (elapsed - lastVisualRefresh > 0.28) {
     lastVisualRefresh = elapsed;
     updateDiscoveredZonesVisuals();
@@ -1621,58 +2759,32 @@ function animate(): void {
   visualizeThermalScan();
   updateDroneMovement(dt);
 
-  if (elapsed - lastTelemetryUpdate > 0.12) {
+  if (elapsed - lastTelemetryUpdate > 0.2) {
     lastTelemetryUpdate = elapsed;
 
     // Update telemetry
-    metrics.innerHTML = [
-      `AUTONOMOUS DRONE - EXPLORATION & DISCOVERY MISSION`,
-      `Status: ${explorationMode ? `EXPLORING (${discoveredZones.length} zones found)` : droneState.missionComplete ? 'MISSION COMPLETE' : 'IN MISSION'}`,
-      `Zones Discovered: ${discoveredZones.length}`,
-      `Distance: ${droneState.distanceTraveled.toFixed(1)} m`,
-      ...discoveredZones.map((z) => `<span style="color: #00ffaa;">✓ Zone ${z.id}: (${z.x.toFixed(2)}, ${z.z.toFixed(2)}) Intensity: ${z.intensity.toFixed(2)}</span>`),
-    ].join('<br/>');
+    metrics.textContent = `AUTONOMOUS DRONE - EXPLORATION & DISCOVERY MISSION\nStatus: ${explorationMode ? `EXPLORING (${discoveredZones.length} zones found)` : droneState.missionComplete ? 'MISSION COMPLETE' : 'IN MISSION'}\nZones Discovered: ${discoveredZones.length}\nDistance: ${droneState.distanceTraveled.toFixed(1)} m`;
 
-    drlMetrics.innerHTML = [
-      `Algorithm: ${policyStatus === 'ready' ? 'Hybrid Dyna Policy Inference' : 'RL Environment Fallback Controller'}`,
-      `Coverage Strategy: RL Policy + Thermal Guidance`,
-      `Policy Mix: 100% RL`,
-      `Phase: TRAINING EPISODE`,
-      `Mission Countdown: ${Math.ceil(missionTimeRemaining)} sec`,
-      `Scan Radius: ${SCAN_RADIUS} units | Speed: ${droneState.maxSpeed} m/s`,
-      `Policy Status: ${policyStatus.toUpperCase()} | Policy Grid: ${policyGridX}x${policyGridZ}`,
-      `Thermal Readings: ${thermalReadings.length}`,
-      `Cumulative Reward: ${cumulativeReward.toFixed(3)} | Episode Steps: ${episodeSteps}`,
-      `Thermal Gradient: ${(currentThermalSignal - lastThermalSignal).toFixed(4)} | Epsilon: ${epsilon.toFixed(4)}`,
-      `Velocity: ${droneState.velocity.length().toFixed(2)} m/s`,
-      lastCollision ? `<span style="color: #ff4d4d;">Collision detected: auto-reset triggered</span>` : '',
-    ].join('<br/>');
+    drlMetrics.textContent = `Algorithm: ${policyStatus === 'ready' ? 'Hybrid Dyna Policy Inference' : 'RL Environment Fallback Controller'}\nCoverage Strategy: RL Policy + Thermal Guidance\nPolicy Mix: 100% RL\nPhase: TRAINING EPISODE\nMission Countdown: ${Math.ceil(missionTimeRemaining)} sec\nScan Radius: ${SCAN_RADIUS} units | Speed: ${droneState.maxSpeed} m/s\nPolicy Status: ${policyStatus.toUpperCase()} | Policy Grid: ${policyGridX}x${policyGridZ}\nThermal Readings: ${thermalReadings.length}\nCumulative Reward: ${cumulativeReward.toFixed(3)} | Episode Steps: ${episodeSteps}\nThermal Gradient: ${(currentThermalSignal - lastThermalSignal).toFixed(4)} | Epsilon: ${epsilon.toFixed(4)}\nVelocity: ${droneState.velocity.length().toFixed(2)} m/s${lastCollision ? '\nCollision detected: auto-reset triggered' : ''}`;
 
     // Update UI values
-    const statusEl = document.getElementById('drone-status');
-    const countdownEl = document.getElementById('mission-countdown');
-    const discoveredEl = document.getElementById('zones-discovered');
-    const visitedEl = document.getElementById('zones-visited');
-    const distanceEl = document.getElementById('distance-val');
-    const speedEl = document.getElementById('speed-val');
-
-    if (statusEl)
-      statusEl.textContent = explorationMode
+    if (droneStatusEl)
+      droneStatusEl.textContent = explorationMode
         ? 'EXPLORING'
         : droneState.isFlying
           ? 'IN MISSION'
           : droneState.missionComplete
             ? 'COMPLETE'
             : 'READY';
-    if (discoveredEl) discoveredEl.textContent = String(discoveredZones.length);
-    if (visitedEl) visitedEl.textContent = 'Coordinates only';
-    if (countdownEl) {
+    if (zonesDiscoveredEl) zonesDiscoveredEl.textContent = String(discoveredZones.length);
+    if (zonesVisitedEl) zonesVisitedEl.textContent = 'Coordinates only';
+    if (missionCountdownEl) {
       const minutes = Math.floor(missionTimeRemaining / 60);
       const seconds = Math.floor(missionTimeRemaining % 60).toString().padStart(2, '0');
-      countdownEl.textContent = `${minutes.toString().padStart(2, '0')}:${seconds}`;
+      missionCountdownEl.textContent = `${minutes.toString().padStart(2, '0')}:${seconds}`;
     }
-    if (distanceEl) distanceEl.textContent = `${droneState.distanceTraveled.toFixed(1)} m`;
-    if (speedEl) speedEl.textContent = `${droneState.maxSpeed.toFixed(1)} m/s`;
+    if (distanceValEl) distanceValEl.textContent = `${droneState.distanceTraveled.toFixed(1)} m`;
+    if (speedValEl) speedValEl.textContent = `${droneState.maxSpeed.toFixed(1)} m/s`;
   }
 
   // Update camera based on selected view
@@ -1682,10 +2794,15 @@ function animate(): void {
   requestAnimationFrame(animate);
 }
 
-animate();
+const isAuthenticated = initializeAuthentication();
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+if (isAuthenticated) {
+  setupUI();
+  animate();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+}

@@ -1,0 +1,12 @@
+{
+  "project_id": "project0130",
+  "client_name": "cli-client",
+  "map_image_file": "sample_map.png",
+  "grid_resolution": 80,
+  "world_scale_m_per_cell": 1.4,
+  "mission_profile": {
+    "max_seconds": 420,
+    "drone_max_speed": 18,
+    "heat_zone_budget": 36
+  }
+}

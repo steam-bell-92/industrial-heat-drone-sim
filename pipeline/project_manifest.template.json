@@ -1,0 +1,13 @@
+{
+  "project_id": "randoma-zone-4",
+  "client_name": "Randoma Industrial Park",
+  "map_image_file": "map_zone4.png",
+  "grid_resolution": 80,
+  "world_scale_m_per_cell": 1.4,
+  "map_rotation_degrees": 0,
+  "mission_profile": {
+    "max_seconds": 420,
+    "drone_max_speed": 18,
+    "heat_zone_budget": 36
+  }
+}

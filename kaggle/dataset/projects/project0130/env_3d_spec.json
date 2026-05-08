@@ -1,0 +1,25 @@
+{
+  "project_id": "project0130",
+  "source": "saved-localstorage",
+  "preset": "building_cluster",
+  "grid": {
+    "width": 40,
+    "height": 40,
+    "cell_size": 3
+  },
+  "rendering": {
+    "wall_height": 12,
+    "floor_material": "concrete",
+    "wall_material": "steel",
+    "lighting_profile": "industrial-default",
+    "fog_density": 0.004
+  },
+  "optimization": {
+    "merge_static_geometry": true,
+    "use_instancing": true,
+    "enable_lod": true,
+    "target_fps": 60,
+    "max_draw_calls": 260
+  },
+  "objects": []
+}

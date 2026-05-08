@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "projects": [
+    {
+      "project_id": "newwwwwwwwwwwwwww",
+      "dataset_path": "projects/newwwwwwwwwwwwwww",
+      "has_occupancy": true,
+      "has_env_spec": true
+    },
+    {
+      "project_id": "project01",
+      "dataset_path": "projects/project01",
+      "has_occupancy": true,
+      "has_env_spec": true
+    },
+    {
+      "project_id": "project0130",
+      "dataset_path": "projects/project0130",
+      "has_occupancy": true,
+      "has_env_spec": true
+    }
+  ]
+}

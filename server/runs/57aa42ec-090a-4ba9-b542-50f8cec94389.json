@@ -1,0 +1,13 @@
+{
+  "id": "57aa42ec-090a-4ba9-b542-50f8cec94389",
+  "mode": "local",
+  "status": "complete",
+  "createdAt": 1778176816182,
+  "projectId": "project01",
+  "pid": 26948,
+  "logPath": "C:\\Users\\Aanshu Bhawsar\\Desktop\\projects\\DRL(Wildfire )\\server\\runs\\57aa42ec-090a-4ba9-b542-50f8cec94389.log",
+  "environmentName": "current",
+  "backupPolicy": "C:\\Users\\Aanshu Bhawsar\\Desktop\\projects\\DRL(Wildfire )\\trainer\\models\\backups\\dyna_q_policy.local_pre_train.2026-05-07T18-00-16-184Z.json",
+  "exitCode": 0,
+  "finishedAt": 1778176822074
+}

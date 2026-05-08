@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "env_3d_spec.schema.json",
+  "title": "3D Environment Specification",
+  "type": "object",
+  "required": ["project_id", "grid", "rendering", "optimization"],
+  "properties": {
+    "project_id": { "type": "string" },
+    "source": { "type": "string" },
+    "grid": {
+      "type": "object",
+      "required": ["width", "height", "cell_size"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "cell_size": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "rendering": {
+      "type": "object",
+      "properties": {
+        "wall_height": { "type": "number", "minimum": 0.1 },
+        "floor_material": { "type": "string" },
+        "wall_material": { "type": "string" },
+        "lighting_profile": { "type": "string" },
+        "fog_density": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "optimization": {
+      "type": "object",
+      "properties": {
+        "merge_static_geometry": { "type": "boolean" },
+        "use_instancing": { "type": "boolean" },
+        "enable_lod": { "type": "boolean" },
+        "target_fps": { "type": "integer", "minimum": 24 },
+        "max_draw_calls": { "type": "integer", "minimum": 50 }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

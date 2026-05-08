@@ -1,0 +1,13 @@
+{
+  "project_id": "newwwwwwwwwwwwwww",
+  "dataset_project_path": "projects/newwwwwwwwwwwwwww",
+  "required_files": [
+    "project_manifest.json",
+    "occupancy_grid.json",
+    "env_3d_spec.json"
+  ],
+  "optional_files": [
+    "sim_experience.json",
+    "dyna_q_policy.json"
+  ]
+}

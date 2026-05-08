@@ -1,0 +1,13 @@
+{
+  "generated_at": "bootstrap",
+  "world": {
+    "x_lim": [-35, 35],
+    "z_lim": [-35, 35],
+    "actions": ["+x", "-x", "+z", "-z", "hover"]
+  },
+  "episodes": [
+    {
+      "steps": []
+    }
+  ]
+}
