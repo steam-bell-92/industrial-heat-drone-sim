@@ -2478,6 +2478,28 @@ function setupUI(): void {
     };
   };
 
+  type TrainingStartResponse = {
+    id?: string;
+    error?: string;
+    [key: string]: unknown;
+  };
+
+  type RunMetaResponse = {
+    status?: string;
+    createdAt?: number;
+    exitCode?: number;
+    finishedAt?: number;
+    policyOutputPath?: string;
+    [key: string]: unknown;
+  };
+
+  type RunLogResponse = {
+    log?: string;
+    meta?: RunMetaResponse;
+    error?: string;
+    [key: string]: unknown;
+  };
+
   trainingLaunchBtn.addEventListener('click', async () => {
     const projectId = (projectInput.value || 'project01').trim();
     const mapImage = (mapInput.value || 'sample_map.png').trim();
@@ -2504,6 +2526,21 @@ function setupUI(): void {
     const endpoint = trainingMode === 'local' ? `${API_BASE_URL}/api/local/start` : `${API_BASE_URL}/api/kaggle/start`;
     const summaryMode = trainingMode === 'local' ? 'LOCAL' : 'KAGGLE';
 
+    if (
+      trainingMode === 'local' &&
+      typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      endpoint.startsWith('http://')
+    ) {
+      trainingStatus.textContent =
+        'Local training is blocked from an HTTPS page when the backend endpoint is HTTP.\n' +
+        `Current endpoint: ${endpoint}\n\n` +
+        'Use one of these options:\n' +
+        '1) Run the web app locally (http://localhost) with the local API server on http://localhost:3500\n' +
+        '2) Expose the backend over HTTPS and set VITE_API_BASE_URL to that HTTPS URL.';
+      return;
+    }
+
     trainingStatus.textContent = `Starting ${summaryMode} training...\nProject: ${projectId}\nPreset: ${environmentName}\nObjects: ${environmentSpec.objects.length}`;
 
     try {
@@ -2512,8 +2549,28 @@ function setupUI(): void {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const startData = await response.json();
-      const runId = startData.id;
+
+      const startBody = await response.text();
+      let startData: TrainingStartResponse = {};
+      if (startBody.trim().length > 0) {
+        try {
+          startData = JSON.parse(startBody) as TrainingStartResponse;
+        } catch {
+          throw new Error(
+            `Training API returned non-JSON response (${response.status} ${response.statusText}). ` +
+            `Body: ${startBody.slice(0, 260)}`,
+          );
+        }
+      }
+
+      if (!response.ok) {
+        const serverError = typeof startData.error === 'string'
+          ? startData.error
+          : (startBody.trim() || `HTTP ${response.status}`);
+        throw new Error(`Start request failed (${response.status} ${response.statusText}): ${serverError}`);
+      }
+
+      const runId = typeof startData.id === 'string' ? startData.id : '';
       
       if (!runId) {
         trainingStatus.textContent = `Error: No run ID returned\n${JSON.stringify(startData)}`;
@@ -2526,8 +2583,26 @@ function setupUI(): void {
       const pollInterval = setInterval(async () => {
         try {
           const logResponse = await fetch(`${API_BASE_URL}/api/kaggle/run/${runId}/log`);
-          const logData = await logResponse.json();
-          const { log, meta } = logData;
+          const logBody = await logResponse.text();
+          let logData: RunLogResponse = {};
+          if (logBody.trim().length > 0) {
+            try {
+              logData = JSON.parse(logBody) as RunLogResponse;
+            } catch {
+              throw new Error(
+                `Log endpoint returned non-JSON response (${logResponse.status} ${logResponse.statusText}). ` +
+                `Body: ${logBody.slice(0, 260)}`,
+              );
+            }
+          }
+          if (!logResponse.ok) {
+            const serverError = typeof logData.error === 'string'
+              ? logData.error
+              : (logBody.trim() || `HTTP ${logResponse.status}`);
+            throw new Error(`Log polling failed (${logResponse.status} ${logResponse.statusText}): ${serverError}`);
+          }
+          const log = typeof logData.log === 'string' ? logData.log : '';
+          const meta = logData.meta && typeof logData.meta === 'object' ? logData.meta as RunMetaResponse : null;
           pollCount++;
 
           if (!meta) {
@@ -2537,7 +2612,7 @@ function setupUI(): void {
           }
 
           // Calculate elapsed time and progress
-          const createdAt = new Date(meta.createdAt).getTime();
+          const createdAt = typeof meta.createdAt === 'number' ? meta.createdAt : Date.now();
           const now = Date.now();
           const elapsedSeconds = Math.floor((now - createdAt) / 1000);
           const elapsedMinutes = Math.floor(elapsedSeconds / 60);
@@ -2572,10 +2647,10 @@ function setupUI(): void {
             // Display completion details
             let completionText = `[${summaryMode.toUpperCase()} TRAINING COMPLETE]\n`;
             completionText += `Run ID: ${runId}\n`;
-            completionText += `Status: ${meta.status.toUpperCase()}\n`;
+            completionText += `Status: ${(meta.status || 'unknown').toUpperCase()}\n`;
             completionText += `Exit Code: ${meta.exitCode !== undefined ? meta.exitCode : 'N/A'}\n`;
             
-            const finishedAt = meta.finishedAt ? new Date(meta.finishedAt).getTime() : now;
+            const finishedAt = typeof meta.finishedAt === 'number' ? meta.finishedAt : now;
             const totalElapsed = Math.floor((finishedAt - createdAt) / 1000);
             const totalHours = Math.floor(totalElapsed / 3600);
             const totalMins = Math.floor((totalElapsed % 3600) / 60);
