@@ -3,6 +3,8 @@ import { jsPDF } from 'jspdf';
 import './styles.css';
 import { getTrainingApiBaseUrl } from './runtimeConfig';
 
+console.log('%cDHDS-BUILD', 'background: #00ffcc; color: #050b12; font-weight: bold; padding: 4px 8px', 'Thermal-Mapping-Removed-v1');
+
 /**
  * Autonomous Drone Fire Detection System
  * - Drone scans environment to DISCOVER hidden heat zones
