@@ -13,6 +13,19 @@ const repoRoot = path.resolve(__dirname, '..');
 const runsDir = path.join(__dirname, 'runs');
 if (!fs.existsSync(runsDir)) fs.mkdirSync(runsDir, { recursive: true });
 
+function resolvePythonCommand() {
+  if (process.env.PYTHON && String(process.env.PYTHON).trim()) {
+    return String(process.env.PYTHON).trim();
+  }
+
+  const venvPythonWin = path.join(repoRoot, '.venv', 'Scripts', 'python.exe');
+  const venvPythonUnix = path.join(repoRoot, '.venv', 'bin', 'python');
+  if (fs.existsSync(venvPythonWin)) return venvPythonWin;
+  if (fs.existsSync(venvPythonUnix)) return venvPythonUnix;
+
+  return 'python';
+}
+
 function writeRunMeta(runId, meta) {
   fs.writeFileSync(path.join(runsDir, `${runId}.json`), JSON.stringify(meta, null, 2));
 }
@@ -126,7 +139,7 @@ app.post('/api/kaggle/start', (req, res) => {
   if (token) { args.push('--kaggle-token', token); }
   if (waitKernel) args.push('--wait-kernel');
 
-  const py = process.env.PYTHON || 'python';
+  const py = resolvePythonCommand();
   const env = Object.assign({}, process.env, {
     DYNA_TRAIN_SECONDS: String(trainSeconds),
     DYNA_PLANNING_STEPS: String(planningSteps),
@@ -140,10 +153,20 @@ app.post('/api/kaggle/start', (req, res) => {
   const child = spawn(py, args, { cwd: repoRoot, env });
   meta.pid = child.pid;
   meta.status = 'running';
+  meta.python = py;
   writeRunMeta(runId, meta);
 
   child.stdout.on('data', (d) => { outStream.write(d); });
   child.stderr.on('data', (d) => { outStream.write(d); });
+
+  child.on('error', (err) => {
+    outStream.write(`\n[spawn-error] ${String(err && err.stack ? err.stack : err)}\n`);
+    meta.status = 'error';
+    meta.error = String(err && err.message ? err.message : err);
+    meta.finishedAt = Date.now();
+    writeRunMeta(runId, meta);
+    outStream.end();
+  });
 
   child.on('close', (code) => {
     meta.status = code === 0 ? 'complete' : 'error';
@@ -179,7 +202,7 @@ app.post('/api/local/start', (req, res) => {
     fs.writeFileSync(path.join(runsDir, `${runId}.environment.json`), JSON.stringify(environmentSpec, null, 2));
   }
 
-  const py = process.env.PYTHON || 'python';
+  const py = resolvePythonCommand();
   const env = Object.assign({}, process.env, {
     DYNA_TRAIN_SECONDS: String(trainSeconds),
     DYNA_PLANNING_STEPS: String(planningSteps),
@@ -203,10 +226,20 @@ app.post('/api/local/start', (req, res) => {
   const child = spawn(py, ['trainer/train_dyna_q.py'], { cwd: repoRoot, env });
   meta.pid = child.pid;
   meta.status = 'running';
+  meta.python = py;
   writeRunMeta(runId, meta);
 
   child.stdout.on('data', (d) => { outStream.write(d); });
   child.stderr.on('data', (d) => { outStream.write(d); });
+
+  child.on('error', (err) => {
+    outStream.write(`\n[spawn-error] ${String(err && err.stack ? err.stack : err)}\n`);
+    meta.status = 'error';
+    meta.error = String(err && err.message ? err.message : err);
+    meta.finishedAt = Date.now();
+    writeRunMeta(runId, meta);
+    outStream.end();
+  });
 
   child.on('close', (code) => {
     meta.status = code === 0 ? 'complete' : 'error';
