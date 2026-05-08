@@ -68,13 +68,16 @@ app.get('/api/policies/content', (req, res) => {
     return res.status(403).json({ error: 'policy path not allowed' });
   }
   if (!fs.existsSync(resolved)) {
+    console.warn(`[API] Policy file not found: ${resolved}`);
     return res.status(404).json({ error: 'policy not found' });
   }
 
   try {
     const payload = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+    console.log(`[API] Successfully loaded policy from: ${resolved}`);
     return res.json({ path: resolved, payload });
   } catch (err) {
+    console.error(`[API] Error reading policy ${resolved}:`, err);
     return res.status(500).json({ error: `failed to read policy: ${String(err)}` });
   }
 });

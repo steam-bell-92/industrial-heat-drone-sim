@@ -12,17 +12,20 @@ module.exports = function handler(req, res) {
     return;
   }
 
-  const repoRoot = path.resolve(__dirname, '..');
-  const policyPath = path.join(repoRoot, 'trainer', 'models', 'dyna_q_policy.json');
-  
-  if (!fs.existsSync(policyPath)) {
-    return res.json({ exists: false });
-  }
-  
   try {
+    const repoRoot = path.resolve(__dirname, '../..');
+    const policyPath = path.join(repoRoot, 'trainer', 'models', 'dyna_q_policy.json');
+    
+    if (!fs.existsSync(policyPath)) {
+      console.warn('[api/policy/current] Policy not found at:', policyPath);
+      return res.json({ exists: false });
+    }
+    
     const st = fs.statSync(policyPath);
+    console.log('[api/policy/current] Policy found:', policyPath);
     return res.json({ exists: true, path: policyPath, mtime: st.mtimeMs, size: st.size });
   } catch (err) {
-    return res.status(500).json({ error: 'Failed to read policy' });
+    console.error('[api/policy/current] Error:', err);
+    return res.status(500).json({ error: 'Failed to read policy metadata' });
   }
 };
