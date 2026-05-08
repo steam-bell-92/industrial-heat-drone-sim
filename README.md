@@ -8,20 +8,37 @@ This repository contains the autonomous drone heat-zone detection project, inclu
 - Source control and CI: GitHub
 - API host: configurable through environment variables
 
-## Vercel Setup
+## Vercel Deployment
+
+**Live Deployment:**
+- Production: https://heatdrone.vercel.app
+- Full URL: https://industrial-heat-drone-mvd0sepyu-anshu-bhawsars-projects.vercel.app
 
 The root `vercel.json` is configured to build the `web` project and serve the Vite output.
 
-Recommended environment variables in Vercel:
+### Environment Variables
 
-- `VITE_API_BASE_URL` - backend training API base URL
+Set these in Vercel project settings → Environment Variables:
+
+- `VITE_API_BASE_URL` - backend training API base URL (e.g., `https://your-backend-domain.com`)
 - `VITE_BLUEPRINT_API_URL` - blueprint processing API base URL
 
-If you deploy the backend separately, point both variables to that service. If you proxy the backend through the same Vercel domain, the app will fall back to the current origin outside localhost.
+If you host the backend on the same domain or proxy through Vercel, the app will automatically use the current origin outside localhost. For a separate backend, set the environment variables to your API endpoint.
 
 ## GitHub Workflow
 
 The repository includes a GitHub Actions workflow at `.github/workflows/ci.yml` that installs the web dependencies and runs a production build on every push and pull request.
+
+## Backend API Deployment
+
+The `server/index.js` Express API provides training endpoints (`/api/local/start`, `/api/kaggle/start`, `/api/policies`, etc.). This is currently a separate Node.js service that must be deployed independently:
+
+**Deployment Options:**
+- **Local development:** `npm start` in the `server` directory (runs on port 3500)
+- **Cloud hosting:** Render, Railway, Heroku, AWS EC2, or similar Node.js-capable platforms
+- **Vercel API Routes:** (Advanced) Refactor `server/index.js` into `/api/*.js` serverless functions
+
+For production, after deploying the backend, set the `VITE_API_BASE_URL` environment variable in Vercel to your backend's public URL.
 
 ## Local Development
 
