@@ -2541,6 +2541,21 @@ function setupUI(): void {
       return;
     }
 
+    if (trainingMode === 'local' && typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      const isLocalHost = host === 'localhost' || host === '127.0.0.1';
+      if (!isLocalHost) {
+        trainingStatus.textContent =
+          'Local training is not available on deployed Vercel URLs.\n' +
+          `Current host: ${window.location.host}\n` +
+          `Requested endpoint: ${endpoint}\n\n` +
+          'Use one of these options:\n' +
+          '1) Switch Mode to Kaggle Training on this deployed app\n' +
+          '2) Run web + server locally (web on localhost and API on localhost:3500) for Local Training.';
+        return;
+      }
+    }
+
     trainingStatus.textContent = `Starting ${summaryMode} training...\nProject: ${projectId}\nPreset: ${environmentName}\nObjects: ${environmentSpec.objects.length}`;
 
     try {
