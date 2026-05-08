@@ -132,7 +132,7 @@ let discoveredZonesVisualDirty = true;
 let epsilon = 0.28;
 let policyStatus: 'loading' | 'ready' | 'unavailable' = 'loading';
 let hybridPolicy: HybridPolicyPayload | null = null;
-let selectedPolicyPath = 'trainer/models/hybrid_drl_explorer_policy.json';
+let selectedPolicyPath = '/models/hybrid_drl_explorer_policy.json';
 let policyGridX = 36;
 let policyGridZ = 36;
 let policyTBins = 10;
@@ -1259,13 +1259,16 @@ async function loadPolicyFromPath(policyPath: string): Promise<void> {
   selectedPolicyPath = policyPath;
   policyStatus = 'loading';
   try {
-    const response = await fetch(`${API_BASE_URL}/api/policies/content?path=${encodeURIComponent(policyPath)}`, { cache: 'no-cache' });
+    const response = policyPath.startsWith('/models/')
+      ? await fetch(policyPath, { cache: 'no-cache' })
+      : await fetch(`${API_BASE_URL}/api/policies/content?path=${encodeURIComponent(policyPath)}`, { cache: 'no-cache' });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const responsePayload = await response.json() as { path: string; payload: HybridPolicyPayload };
-    const payload = responsePayload.payload;
+    const payload = (policyPath.startsWith('/models/')
+      ? await response.json()
+      : (await response.json() as { path: string; payload: HybridPolicyPayload }).payload) as HybridPolicyPayload;
     if (!Array.isArray(payload.best_actions) || payload.best_actions.length === 0) {
       throw new Error('best_actions missing');
     }
@@ -1508,7 +1511,7 @@ function setupUI(): void {
     <div style="display: flex; gap: 5px; margin-top: 8px;">
       <select id="exploration-policy-select" style="width: 100%; padding: 5px; background: #0a1a2a; color: #00ffdd; border: 1px solid #00ffdd;">
         <option value="trainer/models/dyna_q_policy.json">Dyna-Q (default)</option>
-        <option value="trainer/models/hybrid_drl_explorer_policy.json" selected>Hybrid DRL</option>
+        <option value="/models/hybrid_drl_explorer_policy.json" selected>Hybrid DRL</option>
         <option value="trainer/models/vanilla_q_policy.json">Vanilla Q</option>
       </select>
     </div>
@@ -1624,7 +1627,7 @@ function setupUI(): void {
 
   const policyChoices = [
     { label: 'Dyna-Q (default)', path: 'trainer/models/dyna_q_policy.json' },
-    { label: 'Hybrid DRL', path: 'trainer/models/hybrid_drl_explorer_policy.json' },
+    { label: 'Hybrid DRL', path: '/models/hybrid_drl_explorer_policy.json' },
     { label: 'Vanilla Q', path: 'trainer/models/vanilla_q_policy.json' },
   ];
 
@@ -1953,7 +1956,7 @@ function setupUI(): void {
       // Predefined policy choices (will appear first)
       const predefined = [
         { label: 'Dyna-Q (default)', path: 'trainer/models/dyna_q_policy.json' },
-        { label: 'Hybrid DRL (hybrid_drl_explorer)', path: 'trainer/models/hybrid_drl_explorer_policy.json' },
+        { label: 'Hybrid DRL (hybrid_drl_explorer)', path: '/models/hybrid_drl_explorer_policy.json' },
         { label: 'Vanilla Q (vanilla_q_policy)', path: 'trainer/models/vanilla_q_policy.json' },
       ];
       predefined.forEach(p => {
