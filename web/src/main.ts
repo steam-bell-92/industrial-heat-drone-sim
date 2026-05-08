@@ -1746,6 +1746,7 @@ function setupUI(): void {
     downloadMissionPdf();
   });
 
+  // Environment customization below - thermal controls removed for UI simplification
   // --- Environment Customization Panel ---
   const envPanel = document.createElement('div');
   // Make panel scrollable without overlapping other controls
