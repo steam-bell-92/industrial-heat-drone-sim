@@ -13,78 +13,14 @@ import { getTrainingApiBaseUrl } from './runtimeConfig';
  */
 
 // ============================================
-// AUTHENTICATION SYSTEM
+// APP CHROME
 // ============================================
-function initializeAuthentication(): boolean {
-  const isAuthenticated = localStorage.getItem('drl_authenticated') === 'true';
-  
-  if (!isAuthenticated) {
-    showLoginPage();
-    return false;
-  }
-  
-  setupAuthenticationUI();
-  return true;
-}
-
-function showLoginPage(): void {
-  const loginContainer = document.getElementById('login-container') as HTMLDivElement;
-  
-  loginContainer.innerHTML = `
-    <div style="
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(135deg, #0a1628 0%, #1a3a52 50%, #0d2438 100%);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    ">
-      <div style="
-        position: relative;
-        width: 100%;
-        height: 100%;
-      ">
-        <iframe src="/src/login.html" style="
-          width: 100%;
-          height: 100%;
-          border: none;
-        "></iframe>
-      </div>
-    </div>
-  `;
-  
-  loginContainer.style.display = 'flex';
-  document.body.style.overflow = 'hidden';
-  
-  // Check for authentication change periodically
-  const authCheckInterval = setInterval(() => {
-    if (localStorage.getItem('drl_authenticated') === 'true') {
-      clearInterval(authCheckInterval);
-      loginContainer.style.display = 'none';
-      document.body.style.overflow = 'auto';
-      setupAuthenticationUI();
-    }
-  }, 500);
-}
-
-function setupAuthenticationUI(): void {
+function setupAppUI(): void {
   const docBtn = document.getElementById('doc-btn') as HTMLButtonElement;
-  const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement;
   
   if (docBtn) {
     docBtn.addEventListener('click', () => {
       window.open('/new.html', '_blank', 'noopener,noreferrer');
-    });
-  }
-  
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', () => {
-      if (confirm('Are you sure you want to logout?')) {
-        localStorage.removeItem('drl_authenticated');
-        localStorage.removeItem('drl_user');
-        window.location.reload();
-      }
     });
   }
 }
@@ -2794,15 +2730,12 @@ function animate(): void {
   requestAnimationFrame(animate);
 }
 
-const isAuthenticated = initializeAuthentication();
+setupAppUI();
+setupUI();
+animate();
 
-if (isAuthenticated) {
-  setupUI();
-  animate();
-
-  window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
-}
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
