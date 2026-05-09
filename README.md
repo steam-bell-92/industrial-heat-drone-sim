@@ -28,14 +28,14 @@ All three team members contributed equally across all aspects of the project, wi
 
 ## Key Features
 
-- ✅ **Hybrid Dyna-Q RL Engine** - Direct RL + Model-based planning
-- ✅ **Real-Time 3D Visualization** - Five camera perspectives with WebGL
-- ✅ **Thermal Guidance Integration** - Probabilistic heat detection with Gaussian falloff
-- ✅ **Curriculum Learning** - Five progressive training phases
-- ✅ **Production Authentication** - Login system with secure access
-- ✅ **Comprehensive Telemetry** - Real-time metrics & monitoring
-- ✅ **Policy Management** - Export/import Q-value tables
-- ✅ **Mission Report Generation** - PDF export of results
+- **Hybrid Dyna-Q RL Engine** - Direct RL + Model-based planning
+- **Real-Time 3D Visualization** - Five camera perspectives with WebGL
+- **Thermal Guidance Integration** - Probabilistic heat detection with Gaussian falloff
+- **Curriculum Learning** - Five progressive training phases
+- **Production Authentication** - Login system with secure access
+- **Comprehensive Telemetry** - Real-time metrics & monitoring
+- **Policy Management** - Export/import Q-value tables
+- **Mission Report Generation** - PDF export of results
 
 ---
 
@@ -44,28 +44,28 @@ All three team members contributed equally across all aspects of the project, wi
 ### Core Components
 
 ```
-┌─────────────────────────────────────────────────┐
-│            SYSTEM ARCHITECTURE                  │
-├─────────────────────────────────────────────────┤
-│                                                 │
+┌────────────────────────────────────────────────┐
+│            SYSTEM ARCHITECTURE                 │
+├────────────────────────────────────────────────┤
+│                                                │
 │  Frontend (TypeScript + Three.js)              │
 │    ├─ 3D WebGL Drone Simulator                 │
 │    ├─ RL Policy Engine                         │
 │    ├─ Real-time Telemetry Dashboard            │
 │    └─ Environment Builder (Click-to-place)     │
-│                                                 │
+│                                                │
 │  Backend (Node.js + Python)                    │
 │    ├─ Training API (Express)                   │
 │    ├─ Dyna-Q Training (Python)                 │
 │    ├─ Kaggle Integration                       │
 │    └─ Policy Management                        │
-│                                                 │
-│  Deployment                                     │
+│                                                │
+│  Deployment                                    │
 │    ├─ Frontend: Vercel                         │
 │    ├─ Backend: Configurable (Node.js service)  │
 │    └─ CI/CD: GitHub Actions                    │
-│                                                 │
-└─────────────────────────────────────────────────┘
+│                                                │
+└────────────────────────────────────────────────┘
 ```
 
 ### Technical Specifications
