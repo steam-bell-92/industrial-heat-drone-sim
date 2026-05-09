@@ -12,6 +12,20 @@ This repository contains the **Autonomous Drone Heat-Zone Detection System** usi
 
 ---
 
+## Contributors
+
+This project is the result of **equal contributions** from:
+
+| Contributor | Roll No | Responsibility |
+|---|---|---|
+| **Vivek** | 24bsm064 | Core RL Algorithm, Dyna-Q Implementation, Training Pipeline |
+| **Suyog** | 24bsm062 | Frontend Architecture, 3D Visualization, UI/UX |
+| **Anuj** | 24bsm009 | Backend API, Deployment, Integration & DevOps |
+
+All three team members contributed equally across all aspects of the project, with shared ownership of the complete system architecture, testing, and production deployment.
+
+---
+
 ## Key Features
 
 - ✅ **Hybrid Dyna-Q RL Engine** - Direct RL + Model-based planning
